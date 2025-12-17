@@ -3,14 +3,13 @@
  * Plugin Name: blugin-rezerf
  * Plugin URI: #
  * Description: ورژن بتا رزو نوبت دهی
- * Version: 0.5.4
+ * Version: 0.5.0
  * Author: kiarash abdollahi
  * Author URI: #
  * License: GPL2
  * Text Domain: my-booking-plugin
  */
 
- 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 // مسیر اصلی افزونه
@@ -20,9 +19,6 @@ define( 'MBP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-database.php';
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-core.php';
 require_once MBP_PLUGIN_DIR . 'elementor/elementor-init.php';
-
-
-
 
 // فعال‌سازی: ساخت جدول‌ها
 function mbp_activate_plugin() {
@@ -37,25 +33,34 @@ function mbp_run_plugin() {
 }
 mbp_run_plugin();
 
-add_action('init', function () {
+/**
+ * Auto Update via GitHub (Plugin Update Checker)
+ */
+add_action('plugins_loaded', function () {
 
     $puc_path = plugin_dir_path(__FILE__) . 'lib/plugin-update-checker-5.6/plugin-update-checker.php';
-    if (!file_exists($puc_path)) return;
+    if ( ! file_exists($puc_path) ) {
+        return;
+    }
 
     require_once $puc_path;
 
-    // بهتر: URL بدون .git
+    // URL ریپو (بدون .git)
     $repo_url = 'https://github.com/kiarashAB/wordperesafzone/';
 
-    // بهترین حالت: اسلاگ = اسم پوشه افزونه داخل wp-content/plugins/
+    // اسلاگ افزونه = اسم پوشه داخل wp-content/plugins/
     $slug = basename(dirname(__FILE__));
 
+    // ساخت آپدیت‌چکر
     $updateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
         $repo_url,
         __FILE__,
         $slug
     );
 
-    // اگر می‌خوای از Release Asset (zip) استفاده کنی
+    // اگر می‌خوای از Releases (zip) آپدیت بده
     $updateChecker->getVcsApi()->enableReleaseAssets();
+
+    // اختیاری ولی مفید: چون بعضی وقت‌ها گیت‌هاب دیر sync میشه
+    // $updateChecker->setBranch('main'); // اگر برنچ اصلیت main هست
 });
