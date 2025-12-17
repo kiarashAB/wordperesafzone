@@ -3,7 +3,7 @@
  * Plugin Name: blugin-rezerf
  * Plugin URI: #
  * Description: ورژن بتا رزو نوبت دهی
- * Version: 0.5.4
+ * Version: 0.6.0
  * Author: kiarash abdollahi
  * Author URI: #
  * License: GPL2
