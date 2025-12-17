@@ -10,6 +10,7 @@
  * Text Domain: my-booking-plugin
  */
 
+ 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 // مسیر اصلی افزونه
