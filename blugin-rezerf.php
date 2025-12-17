@@ -2,11 +2,7 @@
 /**
  * Plugin Name: blugin-rezerf
  * Plugin URI: #
-<<<<<<< HEAD
  * Description: ورژن بتا رزرو نوبت دهی
-=======
- * Description: ورژن بتا رزو نوبت دهی
->>>>>>> 95e52bfcda831ff3e49afe5fdeec67a761220c48
  * Version: 0.6.0
  * Author: kiarash abdollahi
  * License: GPL2
