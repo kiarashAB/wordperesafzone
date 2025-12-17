@@ -3,7 +3,7 @@
  * Plugin Name: blugin-rezerf
  * Plugin URI: #
  * Description: ورژن بتا رزو نوبت دهی
- * Version: 0.5.0
+ * Version: 0.6.0
  * Author: kiarash abdollahi
  * Author URI: #
  * License: GPL2
@@ -36,31 +36,23 @@ mbp_run_plugin();
 /**
  * Auto Update via GitHub (Plugin Update Checker)
  */
-add_action('plugins_loaded', function () {
+add_action('init', function () {
 
     $puc_path = plugin_dir_path(__FILE__) . 'lib/plugin-update-checker-5.6/plugin-update-checker.php';
-    if ( ! file_exists($puc_path) ) {
-        return;
-    }
+    if (!file_exists($puc_path)) return;
 
     require_once $puc_path;
 
-    // URL ریپو (بدون .git)
-    $repo_url = 'https://github.com/kiarashAB/wordperesafzone/';
+    $repo_url = 'https://github.com/kiarashAB/wordperesafzone';
 
-    // اسلاگ افزونه = اسم پوشه داخل wp-content/plugins/
-    $slug = basename(dirname(__FILE__));
+    $slug = basename(dirname(__FILE__)); // اسم پوشه افزونه
 
-    // ساخت آپدیت‌چکر
     $updateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
         $repo_url,
         __FILE__,
         $slug
     );
 
-    // اگر می‌خوای از Releases (zip) آپدیت بده
+    // 👈 خیلی مهم
     $updateChecker->getVcsApi()->enableReleaseAssets();
-
-    // اختیاری ولی مفید: چون بعضی وقت‌ها گیت‌هاب دیر sync میشه
-    // $updateChecker->setBranch('main'); // اگر برنچ اصلیت main هست
 });
