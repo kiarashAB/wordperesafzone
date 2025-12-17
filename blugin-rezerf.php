@@ -39,7 +39,7 @@ mbp_run_plugin();
 
 add_action('init', function () {
 
-    $puc_path = plugin_dir_path(__FILE__) . 'lib/plugin-update-checker/plugin-update-checker.php';
+    $puc_path = plugin_dir_path(__FILE__) . 'lib/plugin-update-checker-5.6/plugin-update-checker.php';
     if (!file_exists($puc_path)) return;
 
     require_once $puc_path;
