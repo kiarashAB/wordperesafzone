@@ -1876,11 +1876,99 @@ public function ajax_save_time_slots()
         exit;
     }
 
-    public function admin_page_content()
-    {
-        echo '<div class="wrap">';
-        echo '<h1>' . esc_html__('پنل مدیریت رزرو', 'my-booking-plugin') . '</h1>';
-        echo '<p>' . esc_html__('برای ورود به پنل تمام صفحه مدیریت رزرو، روی', 'my-booking-plugin') . ' <strong>' . esc_html__('ورود به پنل', 'my-booking-plugin') . '</strong> ' . esc_html__('در زیر منو کلیک کنید.', 'my-booking-plugin') . '</p>';
-        echo '</div>';
+   public function admin_page_content()
+{
+    if (!current_user_can('manage_options')) {
+        wp_die('دسترسی ندارید');
     }
+
+    $dashboard_url = admin_url('admin-post.php?action=mbp_dashboard_app');
+    $license_url   = admin_url('admin.php?page=mbp-license'); // اگر صفحه لایسنس داری
+
+    // وضعیت لایسنس (اگر کلاسش هست)
+    $license_ok = null;
+    if (class_exists('MBP_License')) {
+        $license_ok = MBP_License::is_valid();
+    }
+
+    echo '<div class="wrap" style="direction:rtl;">';
+    echo '<h1 style="margin-bottom:14px;">' . esc_html__('پنل مدیریت رزرو', 'my-booking-plugin') . '</h1>';
+
+    // کارت/باکس
+    echo '
+    <div style="
+        max-width: 720px;
+        background:#fff;
+        border:1px solid #e5e7eb;
+        border-radius:14px;
+        padding:16px;
+        box-shadow: 0 8px 22px rgba(0,0,0,.06);
+    ">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:14px; opacity:.85; margin-bottom:6px;">افزونه</div>
+                <div style="font-size:18px; font-weight:900;">افزونه رزرو نوبت</div>
+            </div>';
+
+    // نشان وضعیت
+    if ($license_ok === true) {
+        echo '<div style="
+            padding:6px 10px;
+            border-radius:999px;
+            background:rgba(0,163,42,.12);
+            border:1px solid rgba(0,163,42,.25);
+            color:#0a5a22;
+            font-weight:800;
+            font-size:12px;
+            white-space:nowrap;
+        ">فعال ✅</div>';
+    } elseif ($license_ok === false) {
+        echo '<div style="
+            padding:6px 10px;
+            border-radius:999px;
+            background:rgba(214,54,56,.10);
+            border:1px solid rgba(214,54,56,.25);
+            color:#7a1112;
+            font-weight:800;
+            font-size:12px;
+            white-space:nowrap;
+        ">نیاز به فعال‌سازی ❌</div>';
+    }
+
+    echo '
+        </div>
+
+        <div style="margin-top:12px; line-height:1.9; color:#374151;">
+            از اینجا می‌تونی وارد <strong>پنل تمام صفحه</strong> بشی و رزروها رو مدیریت کنی.
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+            <a href="' . esc_url($dashboard_url) . '" class="button button-primary" style="font-weight:800; padding:6px 14px;">
+                ورود به پنل مدیریت
+            </a>';
+
+    // دکمه فعال سازی/لایسنس (اختیاری)
+    if ($license_ok === false) {
+        echo '
+            <a href="' . esc_url($license_url) . '" class="button" style="font-weight:800; padding:6px 14px;">
+                فعال‌سازی / لایسنس
+            </a>';
+    } else {
+        echo '
+            <a href="' . esc_url($license_url) . '" class="button" style="font-weight:800; padding:6px 14px;">
+                مدیریت لایسنس
+            </a>';
+    }
+
+    echo '
+        </div>
+
+        <div style="margin-top:10px; font-size:12px; opacity:.75;">
+            نکته: برای نمایش جدول رزرو در سایت از شورتکد <code>[mbp_public_schedule]</code> استفاده کن.
+        </div>
+    </div>';
+
+    echo '</div>';
+}
+
 }
