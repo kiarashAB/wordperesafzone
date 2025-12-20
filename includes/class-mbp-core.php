@@ -537,65 +537,114 @@ JS;
     // =========================
     // Time slots
     // =========================
-    private function get_time_slots()
-    {
-        $default = array('09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00');
+    
 
-        $opt = get_option(self::OPTION_TIME_SLOTS, null);
-        if (!is_array($opt) || empty($opt))
-            return $default;
+  private function get_time_slots()
+{
+    $default = array('09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00');
 
-        $clean = array();
-        foreach ($opt as $t) {
-            $t = trim((string) $t);
-            if (preg_match('/^\d{2}:\d{2}$/', $t))
-                $clean[] = $t;
-        }
-        $clean = array_values(array_unique($clean));
-        sort($clean);
-        return !empty($clean) ? $clean : $default;
+    $opt = get_option(self::OPTION_TIME_SLOTS, null);
+    if (!is_array($opt) || empty($opt)) {
+        return $default;
     }
 
-    public function ajax_get_time_slots()
-    {
-        if (!current_user_can('manage_options'))
-            wp_send_json_error(array('message' => 'دسترسی ندارید'));
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
-            wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+    $clean = array();
+    foreach ($opt as $t) {
+        $t = trim((string) $t);
+
+        // اعتبارسنجی دقیق ساعت و دقیقه (09:00)
+        if (preg_match('/^(2[0-3]|[01]\d):([0-5]\d)$/', $t)) {
+            $clean[] = $t;
         }
-        wp_send_json_success(array('slots' => $this->get_time_slots()));
     }
 
-    public function ajax_save_time_slots()
-    {
-        if (!current_user_can('manage_options'))
-            wp_send_json_error(array('message' => 'دسترسی ندارید'));
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
-            wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
-        }
+    $clean = array_values(array_unique($clean));
 
-        $raw = isset($_POST['slots_text']) ? wp_unslash($_POST['slots_text']) : '';
-        $lines = preg_split("/\r\n|\n|\r/", (string) $raw);
+    // مرتب‌سازی بر اساس زمان واقعی
+    usort($clean, function ($a, $b) {
+        return strtotime($a) - strtotime($b);
+    });
 
-        $slots = array();
-        foreach ($lines as $line) {
-            $t = trim($line);
-            if ($t === '')
-                continue;
-            if (!preg_match('/^\d{2}:\d{2}$/', $t))
-                continue;
-            $slots[] = $t;
-        }
+    return !empty($clean) ? $clean : $default;
+}
 
-        $slots = array_values(array_unique($slots));
-        sort($slots);
-
-        if (empty($slots))
-            wp_send_json_error(array('message' => 'حداقل یک ساعت معتبر وارد کنید مثل 09:00'));
-
-        update_option(self::OPTION_TIME_SLOTS, $slots, false);
-        wp_send_json_success(array('message' => 'ذخیره شد', 'slots' => $slots));
+public function ajax_get_time_slots()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('message' => 'دسترسی ندارید'));
     }
+
+    // nonce ممکنه با GET یا POST بیاد
+    $nonce = '';
+    if (isset($_POST['nonce'])) {
+        $nonce = sanitize_text_field(wp_unslash($_POST['nonce']));
+    } elseif (isset($_GET['nonce'])) {
+        $nonce = sanitize_text_field(wp_unslash($_GET['nonce']));
+    }
+
+    if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) {
+        wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+    }
+
+    wp_send_json_success(array(
+        'slots' => $this->get_time_slots()
+    ));
+}
+
+public function ajax_save_time_slots()
+{
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('message' => 'دسترسی ندارید'));
+    }
+
+    // nonce ممکنه با GET یا POST بیاد
+    $nonce = '';
+    if (isset($_POST['nonce'])) {
+        $nonce = sanitize_text_field(wp_unslash($_POST['nonce']));
+    } elseif (isset($_GET['nonce'])) {
+        $nonce = sanitize_text_field(wp_unslash($_GET['nonce']));
+    }
+
+    if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) {
+        wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+    }
+
+    $raw   = isset($_POST['slots_text']) ? wp_unslash($_POST['slots_text']) : '';
+    $lines = preg_split("/\r\n|\n|\r/", (string) $raw);
+
+    $slots = array();
+    foreach ($lines as $line) {
+        $t = trim((string) $line);
+        if ($t === '') {
+            continue;
+        }
+
+        // اعتبارسنجی دقیق (09:00)
+        if (!preg_match('/^(2[0-3]|[01]\d):([0-5]\d)$/', $t)) {
+            continue;
+        }
+
+        $slots[] = $t;
+    }
+
+    $slots = array_values(array_unique($slots));
+
+    // مرتب‌سازی بر اساس زمان واقعی
+    usort($slots, function ($a, $b) {
+        return strtotime($a) - strtotime($b);
+    });
+
+    if (empty($slots)) {
+        wp_send_json_error(array('message' => 'حداقل یک ساعت معتبر وارد کنید مثل 09:00'));
+    }
+
+    update_option(self::OPTION_TIME_SLOTS, $slots, false);
+
+    wp_send_json_success(array(
+        'message' => 'ذخیره شد',
+        'slots'   => $slots
+    ));
+}
 
     // =========================
     // Schedule settings
@@ -1768,7 +1817,7 @@ JS;
                                         const res = await fetch(window.MBP_AJAX_URL, { method: 'POST', body: fd });
                                         const data = await res.json();
                                         if (!data.success) { alert(data?.data?.message || 'خطا'); return; }
-                                        ta.value = (data.data.slots || []).join("\\n");
+                                        ta.value = (data.data.slots || []).join("\n");
                                     } catch (err) {
                                         alert('خطای شبکه در بارگذاری اسلات‌ها');
                                     } finally {
