@@ -3,7 +3,7 @@
  * Plugin Name: blugin-rezerf
  * Plugin URI: #
  * Description: ورژن بتا رزرو نوبت دهی
- * Version: 0.5.0
+ * Version: 0.5.5
  * Author: kiarash abdollahi
  * License: GPL2
  * Text Domain: my-booking-plugin
