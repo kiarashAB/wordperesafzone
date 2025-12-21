@@ -1971,4 +1971,5 @@ public function ajax_save_time_slots()
     echo '</div>';
 }
 
+
 }

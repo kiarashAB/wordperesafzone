@@ -3,105 +3,93 @@ if (!defined('ABSPATH')) exit;
 
 class MBP_License
 {
-    const OPTION_LICENSE_KEY = 'mbp_license_key_v1';
-    const TRANSIENT_STATUS   = 'mbp_license_status_v1';
+    const OPTION_KEY   = 'mbp_license_key_v1';
+    const OPTION_STATE = 'mbp_license_state_v1'; // active|inactive
+    const OPTION_INFO  = 'mbp_license_info_v1';  // آرایه اطلاعات (اختیاری)
 
-    // آدرس API شما (همونی که دادی)
+    // آدرس API شما:
     const API_URL = 'http://lisense.somee.com/api/licenses';
 
-    /**
-     * گرفتن دامنه سایت برای مقایسه با boundDomain
-     */
-    public static function get_domain()
+    public static function is_active(): bool
     {
-        $host = wp_parse_url(home_url(), PHP_URL_HOST);
-        $host = strtolower((string)$host);
-        $host = preg_replace('/^www\./', '', $host);
-        return $host;
+        $state = get_option(self::OPTION_STATE, 'inactive');
+        return $state === 'active';
     }
 
-    public static function get_key()
+    public static function get_key(): string
     {
-        return (string) get_option(self::OPTION_LICENSE_KEY, '');
+        return (string) get_option(self::OPTION_KEY, '');
     }
 
-    public static function save_key($key)
+    public static function set_inactive(string $msg = ''): void
     {
-        $key = sanitize_text_field($key);
-        update_option(self::OPTION_LICENSE_KEY, $key, false);
-        delete_transient(self::TRANSIENT_STATUS); // بعد از تغییر، کش پاک شود
+        update_option(self::OPTION_STATE, 'inactive', false);
+        if ($msg !== '') {
+            update_option(self::OPTION_INFO, array('message' => $msg), false);
+        }
     }
 
-    /**
-     * چک لایسنس با کش (مثلا 12 ساعت)
-     */
-    public static function is_valid_cached()
+    public static function activate(string $license_key): array
     {
-        $cached = get_transient(self::TRANSIENT_STATUS);
-        if (is_array($cached) && isset($cached['valid'])) {
-            return (bool) $cached['valid'];
+        $license_key = trim($license_key);
+        if ($license_key === '') {
+            return array('ok' => false, 'message' => 'لایسنس خالی است');
         }
 
-        $result = self::check_remote();
+        $payload = array(
+            // بسته به بک‌اندت ممکنه اسم فیلدها فرق کنه:
+            'licenseKey' => $license_key,
+            'domain'     => parse_url(home_url(), PHP_URL_HOST),
+        );
 
-        // اگر API قطع بود، بهتره سایت قفل نشه؛
-        // ولی تو می‌خوای امنیت بالا → پس اینجا تصمیم با توئه:
-        // من پیشفرض: اگر خطای شبکه بود، نامعتبر حساب می‌کنم.
-        $valid = (is_array($result) && !empty($result['valid'])) ? true : false;
+        $res = wp_remote_post(self::API_URL, array(
+            'timeout' => 15,
+            'headers' => array('Content-Type' => 'application/json'),
+            'body'    => wp_json_encode($payload),
+        ));
 
-        set_transient(self::TRANSIENT_STATUS, ['valid' => $valid, 'raw' => $result], 12 * HOUR_IN_SECONDS);
-        return $valid;
+        if (is_wp_error($res)) {
+            return array('ok' => false, 'message' => 'خطا در ارتباط با سرور لایسنس');
+        }
+
+        $code = (int) wp_remote_retrieve_response_code($res);
+        $body = wp_remote_retrieve_body($res);
+        $json = json_decode($body, true);
+
+        // ⚠️ این بخش رو با خروجی واقعی API خودت هماهنگ کن
+        // فرض: اگر HTTP 200 و json['valid'] == true یعنی معتبر
+        $valid = false;
+        $msg   = 'نامعتبر';
+
+        if ($code === 200 && is_array($json)) {
+            $valid = !empty($json['valid']);
+            $msg   = $json['message'] ?? ($valid ? 'فعال شد' : 'نامعتبر');
+        } else {
+            $msg = 'پاسخ نامعتبر از سرور لایسنس';
+        }
+
+        if (!$valid) {
+            self::set_inactive($msg);
+            return array('ok' => false, 'message' => $msg);
+        }
+
+        // ذخیره
+        update_option(self::OPTION_KEY, $license_key, false);
+        update_option(self::OPTION_STATE, 'active', false);
+        update_option(self::OPTION_INFO, is_array($json) ? $json : array('message' => $msg), false);
+
+        return array('ok' => true, 'message' => $msg);
     }
 
-    /**
-     * تماس به API و بررسی licenseKey + domain + status
-     * چون API فعلی شما لیست برمی‌گردونه، ما توی اون لیست می‌گردیم.
-     */
-    public static function check_remote()
+    public static function deactivate_local(): void
     {
-        $key = self::get_key();
-        if ($key === '') {
-            return ['valid' => false, 'reason' => 'no_key'];
-        }
+        // فقط داخل سایت غیرفعال می‌کنه (اختیاری)
+        update_option(self::OPTION_STATE, 'inactive', false);
+    }
 
-        $response = wp_remote_get(self::API_URL, [
-            'timeout' => 12,
-            'headers' => [
-                'Accept' => 'application/json',
-            ],
-        ]);
-
-        if (is_wp_error($response)) {
-            return ['valid' => false, 'reason' => 'network_error', 'error' => $response->get_error_message()];
-        }
-
-        $code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-
-        if ($code < 200 || $code >= 300) {
-            return ['valid' => false, 'reason' => 'bad_status', 'http' => $code];
-        }
-
-        $data = json_decode($body, true);
-        if (!is_array($data)) {
-            return ['valid' => false, 'reason' => 'bad_json'];
-        }
-
-        $domain = self::get_domain();
-
-        // توی لیست بگرد
-        foreach ($data as $row) {
-            $licenseKey  = isset($row['licenseKey']) ? (string)$row['licenseKey'] : '';
-            $boundDomain = isset($row['boundDomain']) ? strtolower((string)$row['boundDomain']) : '';
-            $status      = isset($row['status']) ? (bool)$row['status'] : false;
-
-            $boundDomain = preg_replace('/^www\./', '', $boundDomain);
-
-            if ($licenseKey === $key && $boundDomain === $domain && $status === true) {
-                return ['valid' => true, 'reason' => 'ok'];
-            }
-        }
-
-        return ['valid' => false, 'reason' => 'not_found_or_mismatch', 'domain' => $domain];
+    public static function get_info(): array
+    {
+        $info = get_option(self::OPTION_INFO, array());
+        return is_array($info) ? $info : array();
     }
 }

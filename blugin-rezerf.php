@@ -2,79 +2,36 @@
 /**
  * Plugin Name: blugin-rezerf
  * Plugin URI: #
- * Description: ورژن بتا رزرو نوبت دهی
+ * Description: ورژن بتا رزو نوبت دهی
  * Version: 0.6.0
  * Author: kiarash abdollahi
+ * Author URI: #
  * License: GPL2
  * Text Domain: my-booking-plugin
  */
 
-if ( ! defined( 'ABSPATH' ) ) exit;
+if (!defined('ABSPATH')) exit;
 
-define( 'MBP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+// مسیر اصلی افزونه
+define('MBP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 
+// لود کلاس‌ها
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-database.php';
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-core.php';
-require_once MBP_PLUGIN_DIR . 'elementor/elementor-init.php';
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-license.php';
-
-add_action('admin_init', function () {
-    if (!current_user_can('activate_plugins')) return;
-
-    // اگر لایسنس معتبر نیست
-    if (!MBP_License::is_valid_cached()) {
-
-        // افزونه را غیرفعال کن
-        deactivate_plugins(plugin_basename(__FILE__));
-
-        // نذار پیام "Plugin activated" بیاد
-        if (isset($_GET['activate'])) {
-            unset($_GET['activate']);
-        }
-
-        add_action('admin_notices', function () {
-            echo '<div class="notice notice-error"><p>
-            افزونه به دلیل لایسنس نامعتبر غیرفعال شد. 
-            <a href="'.esc_url(admin_url('admin.php?page=mbp-license')).'">فعال‌سازی</a>
-            </p></div>';
-        });
-    }
-});
+require_once MBP_PLUGIN_DIR . 'elementor/elementor-init.php';
 
 
-/* Activation */
+// فعال‌سازی: ساخت جدول‌ها
 function mbp_activate_plugin() {
     MBP_Database::create_tables();
 }
-register_activation_hook( __FILE__, 'mbp_activate_plugin' );
+register_activation_hook(__FILE__, 'mbp_activate_plugin');
 
-/* Run plugin */
-function mbp_run_plugin() {
-    // اجازه بده ادمین همیشه بتونه صفحه لایسنس رو ببینه
-    $is_admin = is_admin() && current_user_can('manage_options');
-
-    // اگر لایسنس معتبر نبود، افزونه اجرا نشه
-    if (!MBP_License::is_valid_cached()) {
-
-        // یک پیام برای ادمین
-        if ($is_admin) {
-            add_action('admin_notices', function () {
-                echo '<div class="notice notice-error"><p>
-                افزونه رزرو فعال نیست. لطفاً لایسنس را وارد کنید: 
-                <a href="'.esc_url(admin_url('admin.php?page=mbp-license')).'">صفحه لایسنس</a>
-                </p></div>';
-            });
-        }
-
-        return; // <<< این یعنی MBP_Core اجرا نشه
-    }
-
-    $plugin = new MBP_Core();
-    $plugin->run();
-}
-mbp_run_plugin();
-
-
+/**
+ * صفحه لایسنس در ادمین
+ * (این بخش مشکلی ندارد چون در admin_menu اجرا می‌شود)
+ */
 add_action('admin_menu', function () {
     add_submenu_page(
         'mbp-bookings',
@@ -96,12 +53,11 @@ function mbp_license_page()
         echo '<div class="notice notice-success"><p>لایسنس ذخیره شد.</p></div>';
     }
 
-    $key = esc_attr(MBP_License::get_key());
+    $key   = esc_attr(MBP_License::get_key());
     $valid = MBP_License::is_valid_cached();
 
     echo '<div class="wrap" style="direction:rtl;max-width:700px">';
     echo '<h1>فعال‌سازی افزونه</h1>';
-
     echo '<p>وضعیت: ' . ($valid ? '<strong style="color:green">فعال ✅</strong>' : '<strong style="color:red">نامعتبر ❌</strong>') . '</p>';
 
     echo '<form method="post">';
@@ -112,25 +68,30 @@ function mbp_license_page()
     echo '</div>';
 }
 
-
-/* ===============================
-   GitHub Auto Update
-================================ */
+/**
+ * ✅ اجرای افزونه را بنداز روی init (یا plugins_loaded)
+ * تا wp_get_current_user و بقیه pluggable ها آماده باشند
+ */
 add_action('init', function () {
 
-    $puc_path = plugin_dir_path(__FILE__) . 'includes/plugin-update-checker-5.6/plugin-update-checker.php';
-    if ( ! file_exists($puc_path) ) {
+    // اگر لایسنس معتبر نیست، افزونه را "قفل" کن (اجرا نکن)
+    if (!MBP_License::is_valid_cached()) {
+
+        // فقط برای ادمین پیام بگذار
+        if (is_admin() && current_user_can('manage_options')) {
+            add_action('admin_notices', function () {
+                echo '<div class="notice notice-error"><p>
+                افزونه رزرو فعال نیست. لطفاً لایسنس را وارد کنید:
+                <a href="'.esc_url(admin_url('admin.php?page=mbp-license')).'">صفحه لایسنس</a>
+                </p></div>';
+            });
+        }
+
+        // ❌ هیچ چیزی از MBP_Core اجرا نشود
         return;
     }
 
-    require_once $puc_path;
-
-    $updateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-        'https://github.com/kiarashAB/wordperesafzone',
-        __FILE__,
-        'blugin-rezerf'
-    );
-
-    // استفاده از GitHub Releases
-    $updateChecker->getVcsApi()->enableReleaseAssets();
+    // ✅ اگر معتبر بود، افزونه اجرا شود
+    $plugin = new MBP_Core();
+    $plugin->run();
 });
