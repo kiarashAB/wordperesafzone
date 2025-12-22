@@ -3,93 +3,146 @@ if (!defined('ABSPATH')) exit;
 
 class MBP_License
 {
-    const OPTION_KEY   = 'mbp_license_key_v1';
-    const OPTION_STATE = 'mbp_license_state_v1'; // active|inactive
-    const OPTION_INFO  = 'mbp_license_info_v1';  // آرایه اطلاعات (اختیاری)
+    const OPT_KEY       = 'mbp_license_key';
+    const OPT_VALID     = 'mbp_license_valid';
+    const OPT_LASTCHECK = 'mbp_license_lastcheck';
 
-    // آدرس API شما:
-    const API_URL = 'http://lisense.somee.com/api/licenses';
+    const PRODUCT_SLUG  = 'rezerv';
+    const API_URL       = 'http://lisense.somee.com/api/licenses';
 
-    public static function is_active(): bool
+    private static function normalize($value)
     {
-        $state = get_option(self::OPTION_STATE, 'inactive');
-        return $state === 'active';
-    }
+        $value = trim((string)$value);
+        if ($value === '') return '';
 
-    public static function get_key(): string
-    {
-        return (string) get_option(self::OPTION_KEY, '');
-    }
-
-    public static function set_inactive(string $msg = ''): void
-    {
-        update_option(self::OPTION_STATE, 'inactive', false);
-        if ($msg !== '') {
-            update_option(self::OPTION_INFO, array('message' => $msg), false);
-        }
-    }
-
-    public static function activate(string $license_key): array
-    {
-        $license_key = trim($license_key);
-        if ($license_key === '') {
-            return array('ok' => false, 'message' => 'لایسنس خالی است');
-        }
-
-        $payload = array(
-            // بسته به بک‌اندت ممکنه اسم فیلدها فرق کنه:
-            'licenseKey' => $license_key,
-            'domain'     => parse_url(home_url(), PHP_URL_HOST),
-        );
-
-        $res = wp_remote_post(self::API_URL, array(
-            'timeout' => 15,
-            'headers' => array('Content-Type' => 'application/json'),
-            'body'    => wp_json_encode($payload),
-        ));
-
-        if (is_wp_error($res)) {
-            return array('ok' => false, 'message' => 'خطا در ارتباط با سرور لایسنس');
-        }
-
-        $code = (int) wp_remote_retrieve_response_code($res);
-        $body = wp_remote_retrieve_body($res);
-        $json = json_decode($body, true);
-
-        // ⚠️ این بخش رو با خروجی واقعی API خودت هماهنگ کن
-        // فرض: اگر HTTP 200 و json['valid'] == true یعنی معتبر
-        $valid = false;
-        $msg   = 'نامعتبر';
-
-        if ($code === 200 && is_array($json)) {
-            $valid = !empty($json['valid']);
-            $msg   = $json['message'] ?? ($valid ? 'فعال شد' : 'نامعتبر');
+        if (!preg_match('~^https?://~i', $value)) {
+            $value_for_parse = 'http://' . $value;
         } else {
-            $msg = 'پاسخ نامعتبر از سرور لایسنس';
+            $value_for_parse = $value;
         }
 
-        if (!$valid) {
-            self::set_inactive($msg);
-            return array('ok' => false, 'message' => $msg);
+        $parts = wp_parse_url($value_for_parse);
+        $host  = isset($parts['host']) ? strtolower($parts['host']) : '';
+        $path  = isset($parts['path']) ? trim($parts['path']) : '';
+
+        $host = preg_replace('~^www\.~i', '', $host);
+        $path = rtrim($path, '/');
+
+        if ($host === '') {
+            $value = strtolower($value);
+            $value = preg_replace('~^https?://~i', '', $value);
+            $value = preg_replace('~^www\.~i', '', $value);
+            $value = rtrim($value, '/');
+            return $value;
         }
 
-        // ذخیره
-        update_option(self::OPTION_KEY, $license_key, false);
-        update_option(self::OPTION_STATE, 'active', false);
-        update_option(self::OPTION_INFO, is_array($json) ? $json : array('message' => $msg), false);
-
-        return array('ok' => true, 'message' => $msg);
+        return $host . ($path ? $path : '');
     }
 
-    public static function deactivate_local(): void
+    private static function this_site_normalized()
     {
-        // فقط داخل سایت غیرفعال می‌کنه (اختیاری)
-        update_option(self::OPTION_STATE, 'inactive', false);
+        return self::normalize(site_url('/'));
     }
 
-    public static function get_info(): array
+    public static function is_valid()
     {
-        $info = get_option(self::OPTION_INFO, array());
-        return is_array($info) ? $info : array();
+        $valid = (bool) get_option(self::OPT_VALID, false);
+        $last  = (int)  get_option(self::OPT_LASTCHECK, 0);
+
+        if ($valid && $last && (time() - $last) < 12 * HOUR_IN_SECONDS) {
+            return true;
+        }
+
+        $key = (string) get_option(self::OPT_KEY, '');
+        if ($key === '') return false;
+
+        $res = self::verify_remote($key);
+
+        update_option(self::OPT_LASTCHECK, time(), false);
+
+        if ($res['ok']) {
+            update_option(self::OPT_VALID, 1, false);
+            return true;
+        }
+
+        update_option(self::OPT_VALID, 0, false);
+        return false;
+    }
+
+    public static function deactivate_local()
+    {
+        update_option(self::OPT_VALID, 0, false);
+        update_option(self::OPT_LASTCHECK, time(), false);
+    }
+
+    public static function activate($license_key)
+    {
+        $license_key = trim((string)$license_key);
+        if ($license_key === '') {
+            return array('ok' => false, 'message' => 'کلید لایسنس خالی است');
+        }
+
+        $res = self::verify_remote($license_key);
+
+        if (!$res['ok']) {
+            update_option(self::OPT_VALID, 0, false);
+            update_option(self::OPT_LASTCHECK, time(), false);
+            return $res;
+        }
+
+        update_option(self::OPT_KEY, $license_key, false);
+        update_option(self::OPT_VALID, 1, false);
+        update_option(self::OPT_LASTCHECK, time(), false);
+
+        return array('ok' => true, 'message' => 'لایسنس با موفقیت فعال شد ✅');
+    }
+
+    private static function verify_remote($license_key)
+    {
+        $resp = wp_remote_get(self::API_URL, array('timeout' => 15));
+
+        if (is_wp_error($resp)) {
+            return array('ok' => false, 'message' => 'خطا در اتصال به سرور لایسنس: ' . $resp->get_error_message());
+        }
+
+        $code = (int) wp_remote_retrieve_response_code($resp);
+        $body = (string) wp_remote_retrieve_body($resp);
+
+        if ($code < 200 || $code >= 300) {
+            return array('ok' => false, 'message' => 'پاسخ نامعتبر از سرور لایسنس (HTTP ' . $code . ')');
+        }
+
+        $list = json_decode($body, true);
+        if (!is_array($list)) {
+            return array('ok' => false, 'message' => 'JSON لایسنس معتبر نیست');
+        }
+
+        $siteN = self::this_site_normalized();
+
+        foreach ($list as $row) {
+            $k = $row['licenseKey']  ?? '';
+            $p = $row['productSlug'] ?? '';
+            $d = $row['boundDomain'] ?? '';
+            $s = $row['status']      ?? false;
+
+            if ((string)$k !== (string)$license_key) continue;
+
+            if ((string)$p !== self::PRODUCT_SLUG) {
+                return array('ok' => false, 'message' => 'این لایسنس برای محصول دیگری است');
+            }
+
+            if (!$s) {
+                return array('ok' => false, 'message' => 'این لایسنس غیرفعال است');
+            }
+
+            $boundN = self::normalize($d);
+            if ($boundN !== $siteN) {
+                return array('ok' => false, 'message' => 'این لایسنس برای این دامنه نیست. دامنه ثبت‌شده: ' . $d);
+            }
+
+            return array('ok' => true, 'message' => 'معتبر ✅');
+        }
+
+        return array('ok' => false, 'message' => 'کلید لایسنس پیدا نشد');
     }
 }
