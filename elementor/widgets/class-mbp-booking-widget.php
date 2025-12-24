@@ -24,7 +24,7 @@ class MBP_Booking_Widget extends Widget_Base
     }
     public function get_categories()
     {
-        return ['general'];
+        return ['mbp-widgets'];
     }
 
     protected function register_controls()
@@ -143,6 +143,56 @@ class MBP_Booking_Widget extends Widget_Base
             'selectors' => [
                 $sel => '--mbp-booked-text: {{VALUE}};',
             ],
+        ]);
+
+        $this->end_controls_section();
+
+        // بخش تایپوگرافی
+        $this->start_controls_section('typography_section', [
+            'label' => 'تایپوگرافی',
+            'tab' => Controls_Manager::TAB_STYLE,
+        ]);
+
+        $this->add_group_control(Group_Control_Typography::get_type(), [
+            'name' => 'title_typography',
+            'label' => 'فونت عنوان',
+            'selector' => '{{WRAPPER}} .mbp-el-title',
+        ]);
+
+        $this->add_group_control(Group_Control_Typography::get_type(), [
+            'name' => 'form_labels_typography',
+            'label' => 'فونت لیبلهای فرم',
+            'selector' => '{{WRAPPER}} .mbp-skin .mbp-label',
+        ]);
+
+        $this->add_group_control(Group_Control_Typography::get_type(), [
+            'name' => 'form_inputs_typography',
+            'label' => 'فونت فیلدهای فرم',
+            'selector' => '{{WRAPPER}} .mbp-skin .mbp-input, {{WRAPPER}} .mbp-skin .mbp-select',
+        ]);
+
+        $this->add_group_control(Group_Control_Typography::get_type(), [
+            'name' => 'form_button_typography',
+            'label' => 'فونت دکمه فرم',
+            'selector' => '{{WRAPPER}} .mbp-skin .mbp-submit',
+        ]);
+
+        $this->add_group_control(Group_Control_Typography::get_type(), [
+            'name' => 'table_headers_typography',
+            'label' => 'فونت سرتیتر جدول',
+            'selector' => '{{WRAPPER}} .mbp-skin .mbp-public-schedule th',
+        ]);
+
+        $this->add_group_control(Group_Control_Typography::get_type(), [
+            'name' => 'table_cells_typography',
+            'label' => 'فونت خانههای جدول',
+            'selector' => '{{WRAPPER}} .mbp-skin .mbp-public-schedule td',
+        ]);
+
+        $this->add_group_control(Group_Control_Typography::get_type(), [
+            'name' => 'toolbar_typography',
+            'label' => 'فونت نوار ابزار',
+            'selector' => '{{WRAPPER}} .mbp-skin .mbp-public-toolbar',
         ]);
 
         $this->end_controls_section();

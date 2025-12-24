@@ -88,9 +88,76 @@ class MBP_Core
 
         // Admin assets
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
+
+        // Elementor support
+        add_action('elementor/widgets/widgets_registered', array($this, 'register_elementor_widgets'));
+        add_action('elementor/elements/categories_registered', array($this, 'add_elementor_widget_categories'));
     }
 
     public function run() {}
+
+    // =========================
+    // ELEMENTOR SUPPORT
+    // =========================
+    public function register_elementor_widgets()
+    {
+        if (!did_action('elementor/loaded')) {
+            return;
+        }
+
+        // Include widget file
+        require_once plugin_dir_path(__FILE__) . 'class-mbp-elementor-widget.php';
+
+        // Register widget
+        \Elementor\Plugin::instance()->widgets_manager->register_widget_type(new MBP_Elementor_Widget());
+    }
+
+    public function add_elementor_widget_categories($elements_manager)
+    {
+        $elements_manager->add_category(
+            'mbp-widgets',
+            [
+                'title' => 'افزونه رزرو نوبت',
+                'icon' => 'fa fa-calendar',
+            ]
+        );
+    }
+
+    
+        // Admin assets if needed
+
+    // =========================
+    // SCHEDULE AJAX
+    // =========================
+    public function ajax_get_schedule_week()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'دسترسی ندارید'));
+        }
+
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
+            wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+        }
+
+        $week_start = isset($_POST['week_start']) ? sanitize_text_field($_POST['week_start']) : wp_date('Y-m-d');
+        
+        // اعتبارسنجی تاریخ
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $week_start)) {
+            wp_send_json_error(array('message' => 'تاریخ نامعتبر است'));
+        }
+
+        $settings = $this->schedule_settings();
+        
+        $tz = wp_timezone();
+        $ws = new DateTime($week_start . ' 00:00:00', $tz);
+        $we = clone $ws;
+        $we->modify('+6 day');
+
+        $appointments_week = $this->get_appointments_for_range($ws->format('Y-m-d'), $we->format('Y-m-d'));
+        $schedule_html = $this->render_schedule_grid_html($appointments_week, $week_start, $settings);
+
+        wp_send_json_success(array('html' => $schedule_html));
+    }
 
     // =========================
     // LICENSE HELPERS
@@ -2699,7 +2766,7 @@ public function ajax_get_services()
 
         ob_start(); ?>
         <div class="">
-            <h3 class="mbp-form-title"><?php esc_html_e('فرم رزرو نوبت', 'my-booking-plugin'); ?></h3>
+
 
             <form id="mbp-booking-form" class="mbp-form" method="post">
                 <div style="display:flex;justify-content:space-around;gap:12px;flex-wrap:wrap;">
@@ -4229,6 +4296,207 @@ private function render_schedule_grid_html($appointments, $week_start_ymd, $sett
                             el.textContent = next_fa;
                         }
 
+                        // ==================== Event Listeners برای رزروها ====================
+                        
+                        // تایید رزرو
+                        document.addEventListener('click', function(e) {
+                            if (e.target.classList.contains('mbp-approve') || e.target.closest('.mbp-approve')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-approve') ? e.target : e.target.closest('.mbp-approve');
+                                const appointmentId = btn.dataset.id;
+                                approveBooking(appointmentId, btn);
+                            }
+                            
+                            // لغو رزرو
+                            if (e.target.classList.contains('mbp-cancel') || e.target.closest('.mbp-cancel')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-cancel') ? e.target : e.target.closest('.mbp-cancel');
+                                const appointmentId = btn.dataset.id;
+                                cancelBooking(appointmentId, btn);
+                            }
+                            
+                            // حذف رزرو
+                            if (e.target.classList.contains('mbp-delete') || e.target.closest('.mbp-delete')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-delete') ? e.target : e.target.closest('.mbp-delete');
+                                const appointmentId = btn.dataset.id;
+                                deleteBooking(appointmentId, btn);
+                            }
+                            
+                            // ناوبری هفتگی
+                            if (e.target.classList.contains('mbp-nav') || e.target.closest('.mbp-nav')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-nav') ? e.target : e.target.closest('.mbp-nav');
+                                const days = parseInt(btn.dataset.weekNav);
+                                navigateWeek(days);
+                            }
+                        });
+                        
+                        // تابعهای مدیریت رزرو
+                        async function approveBooking(appointmentId, button) {
+                            if (!appointmentId) return;
+                            
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+                            
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_approve_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+                                
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+                                
+                                const data = await response.json();
+                                
+                                if (data.success) {
+                                    toast('✅ رزرو تایید شد');
+                                    
+                                    // آپدیت UI
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        const statusEl = card.querySelector('.mbp-status-pending');
+                                        if (statusEl) {
+                                            statusEl.className = 'mbp-status-approved';
+                                            statusEl.textContent = 'Approved';
+                                        }
+                                        button.remove(); // حذف دکمه تایید
+                                    }
+                                    
+                                    updateTotal(0); // رفرش آمار
+                                } else {
+                                    toast(data.data?.message || 'خطا در تایید رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }
+                            } catch (error) {
+                                console.error('Approve booking error:', error);
+                                toast('خطای شبکه در تایید رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+                        
+                        async function cancelBooking(appointmentId, button) {
+                            if (!appointmentId || !confirm('آیا از لغو این رزرو مطمئن هستید؟')) return;
+                            
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+                            
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_cancel_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+                                
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+                                
+                                const data = await response.json();
+                                
+                                if (data.success) {
+                                    toast('⚠️ رزرو لغو شد');
+                                    
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        card.style.opacity = '0.5';
+                                        card.style.filter = 'grayscale(1)';
+                                    }
+                                } else {
+                                    toast(data.data?.message || 'خطا در لغو رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }
+                            } catch (error) {
+                                console.error('Cancel booking error:', error);
+                                toast('خطای شبکه در لغو رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+                        
+                        async function deleteBooking(appointmentId, button) {
+                            if (!appointmentId || !confirm('⚠️ آیا از حذف این رزرو مطمئن هستید؟ این عمل قابل بازگشت نیست.')) return;
+                            
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+                            
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_delete_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+                                
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+                                
+                                const data = await response.json();
+                                
+                                if (data.success) {
+                                    toast('🗑️ رزرو حذف شد');
+                                    
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        card.style.animation = 'fadeOut 0.3s ease';
+                                        setTimeout(() => card.remove(), 300);
+                                    }
+                                    
+                                    updateTotal(-1);
+                                } else {
+                                    toast(data.data?.message || 'خطا در حذف رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }
+                            } catch (error) {
+                                console.error('Delete booking error:', error);
+                                toast('خطای شبکه در حذف رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+                        
+                        async function navigateWeek(days) {
+                            const scheduleWrap = document.querySelector('.mbp-schedule-wrap');
+                            if (!scheduleWrap) return;
+                            
+                            const currentWeekStart = scheduleWrap.dataset.weekStart;
+                            const currentDate = new Date(currentWeekStart);
+                            currentDate.setDate(currentDate.getDate() + days);
+                            
+                            const newWeekStart = currentDate.toISOString().split('T')[0];
+                            
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_get_schedule_week');
+                                formData.append('week_start', newWeekStart);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+                                
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+                                
+                                const data = await response.json();
+                                
+                                if (data.success && data.data.html) {
+                                    document.getElementById('mbp-schedule-root').innerHTML = data.data.html;
+                                }
+                            } catch (error) {
+                                console.error('Navigate week error:', error);
+                                toast('خطا در بارگذاری هفته', 'error');
+                            }
+                        }
+
                         // بارگذاری اولیه
                         const initialView = localStorage.getItem('mbp_active_view') || 'dashboard';
                         const initialItem = document.querySelector(`a.item[data-view="${initialView}"]`) || document.querySelector('a.item.active');
@@ -4926,32 +5194,7 @@ public function ajax_save_time_slots()
     ));
 }
 
-public function ajax_get_schedule_week()
-{
-    if (!current_user_can('manage_options')) wp_send_json_error(array('message' => 'دسترسی ندارید'));
-    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
-        wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
-    }
 
-    if (!$this->license_is_ok()) {
-        wp_send_json_error(array('message' => 'لایسنس فعال نیست'));
-    }
-
-    $week_start = isset($_POST['week_start']) ? sanitize_text_field($_POST['week_start']) : '';
-    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $week_start)) {
-        wp_send_json_error(array('message' => 'تاریخ نامعتبر است'));
-    }
-
-    $settings = $this->schedule_settings();
-    $tz = wp_timezone();
-    $ws = new DateTime($week_start . ' 00:00:00', $tz);
-    $we = clone $ws; $we->modify('+6 day');
-
-    $appointments = $this->get_appointments_for_range($ws->format('Y-m-d'), $we->format('Y-m-d'));
-    $html = $this->render_schedule_grid_html($appointments, $ws->format('Y-m-d'), $settings);
-
-    wp_send_json_success(array('html' => $html, 'week_start' => $ws->format('Y-m-d')));
-}
 public function ajax_public_get_schedule_week()
 {
     if (!$this->license_is_ok()) {
