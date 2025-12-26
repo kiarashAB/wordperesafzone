@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) exit;
 
 define('MBP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('MBP_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('MBP_VERSION', '0.7.0');
+define('MBP_VERSION', '0.8.0');
 
 // لود کلاس‌ها
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-database.php';
