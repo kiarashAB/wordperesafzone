@@ -1,13 +1,16 @@
 <?php
-if ( ! defined( 'ABSPATH' ) ) exit;
+if (!defined('ABSPATH'))
+    exit;
 
-class MBP_Database {
+class MBP_Database
+{
 
-    public static function create_tables() {
+    public static function create_tables()
+    {
         global $wpdb;
 
         $charset_collate = $wpdb->get_charset_collate();
-        
+
         // جدول رزروها (آپدیت شده)
         $table_appointments = $wpdb->prefix . 'mbp_appointments';
         $sql1 = "CREATE TABLE $table_appointments (
@@ -79,6 +82,24 @@ class MBP_Database {
             PRIMARY KEY  (id)
         ) $charset_collate;";
 
+        // در متد create_tables()، بعد از جدول sms_logs اضافه کنید:
+        $table_phonebook = $wpdb->prefix . 'mbp_phonebook';
+        $sql6 = "CREATE TABLE $table_phonebook (
+    id mediumint(9) NOT NULL AUTO_INCREMENT,
+    name varchar(255) NOT NULL,
+    phone varchar(20) NOT NULL,
+    group_name varchar(100) DEFAULT 'عمومی',
+    notes text,
+    created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY  (id),
+    KEY phone (phone),
+    KEY group_name (group_name),
+    UNIQUE KEY unique_phone (phone)
+) $charset_collate;";
+
+        dbDelta($sql6);   
+
         // جدول لاگ پیامک‌ها
         $table_sms_logs = $wpdb->prefix . 'mbp_sms_logs';
         $sql5 = "CREATE TABLE $table_sms_logs (
@@ -96,25 +117,26 @@ class MBP_Database {
         ) $charset_collate;";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-        
+
         // اجرای جداول
-        dbDelta( $sql1 );
-        dbDelta( $sql2 );
-        dbDelta( $sql3 );
-        dbDelta( $sql4 );
-        dbDelta( $sql5 );
-        
+        dbDelta($sql1);
+        dbDelta($sql2);
+        dbDelta($sql3);
+        dbDelta($sql4);
+        dbDelta($sql5);
+
         // درج خدمات پیش‌فرض
         self::insert_default_services();
-        
+
         // درج تنظیمات پیش‌فرض SMS
         self::insert_default_sms_settings();
     }
-    
-    private static function insert_default_services() {
+
+    private static function insert_default_services()
+    {
         global $wpdb;
         $table = $wpdb->prefix . 'mbp_services';
-        
+
         $services = array(
             array(
                 'name' => 'مشاوره اولیه',
@@ -135,25 +157,26 @@ class MBP_Database {
                 'price' => 250000
             )
         );
-        
+
         foreach ($services as $service) {
             $exists = $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM $table WHERE name = %s", 
+                "SELECT COUNT(*) FROM $table WHERE name = %s",
                 $service['name']
             ));
-            
+
             if (!$exists) {
                 $wpdb->insert($table, $service);
             }
         }
     }
-    
-    private static function insert_default_sms_settings() {
+
+    private static function insert_default_sms_settings()
+    {
         global $wpdb;
         $table = $wpdb->prefix . 'mbp_sms_settings';
-        
+
         $exists = $wpdb->get_var("SELECT COUNT(*) FROM $table");
-        
+
         if (!$exists) {
             $wpdb->insert($table, array(
                 'gateway' => 'kavenegar',
@@ -164,37 +187,38 @@ class MBP_Database {
             ));
         }
     }
-    
+
     // متد برای آپدیت جداول موجود
-    public static function update_tables() {
+    public static function update_tables()
+    {
         global $wpdb;
-        
+
         $table_appointments = $wpdb->prefix . 'mbp_appointments';
-        
+
         // بررسی وجود ستون‌های جدید
         $columns = $wpdb->get_results("SHOW COLUMNS FROM $table_appointments");
         $column_names = array();
         foreach ($columns as $column) {
             $column_names[] = $column->Field;
         }
-        
+
         // اضافه کردن ستون‌های جدید اگر وجود ندارند
         if (!in_array('customer_phone', $column_names)) {
             $wpdb->query("ALTER TABLE $table_appointments ADD COLUMN customer_phone varchar(20) NOT NULL DEFAULT ''");
         }
-        
+
         if (!in_array('payment_status', $column_names)) {
             $wpdb->query("ALTER TABLE $table_appointments ADD COLUMN payment_status varchar(20) NOT NULL DEFAULT 'unpaid'");
         }
-        
+
         if (!in_array('sms_sent', $column_names)) {
             $wpdb->query("ALTER TABLE $table_appointments ADD COLUMN sms_sent tinyint(1) NOT NULL DEFAULT 0");
         }
-        
+
         if (!in_array('tracking_code', $column_names)) {
             $wpdb->query("ALTER TABLE $table_appointments ADD COLUMN tracking_code varchar(50) NOT NULL DEFAULT ''");
         }
-        
+
         if (!in_array('notes', $column_names)) {
             $wpdb->query("ALTER TABLE $table_appointments ADD COLUMN notes text");
         }

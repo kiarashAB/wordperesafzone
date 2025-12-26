@@ -58,13 +58,17 @@ class MBP_Core
 
         // SMS AJAX
         add_action('wp_ajax_mbp_get_sms_settings', array($this, 'ajax_get_sms_settings'));
-        add_action('wp_ajax_mbp_save_sms_settings', array($this, 'ajax_save_sms_settings'));
-        add_action('wp_ajax_mbp_test_sms', array($this, 'ajax_test_sms'));
+        add_action('wp_ajax_mbp_send_custom_sms', array($this, 'ajax_send_custom_sms'));
 
         // Payment AJAX
         add_action('wp_ajax_mbp_get_payment_settings', array($this, 'ajax_get_payment_settings'));
         add_action('wp_ajax_mbp_save_payment_settings', array($this, 'ajax_save_payment_settings'));
         add_action('wp_ajax_mbp_initiate_payment', array($this, 'ajax_initiate_payment'));
+
+        // Invoices AJAX
+        add_action('wp_ajax_mbp_get_invoices', array($this, 'ajax_get_invoices'));
+        add_action('wp_ajax_mbp_create_invoice', array($this, 'ajax_create_invoice'));
+        add_action('wp_ajax_mbp_update_invoice_status', array($this, 'ajax_update_invoice_status'));
 
         // User appointments AJAX
         add_action('wp_ajax_mbp_get_user_appointments', array($this, 'ajax_get_user_appointments'));
@@ -570,23 +574,7 @@ JS;
             array($this, 'dashboard_redirect_page')
         );
 
-        add_submenu_page(
-            'mbp-bookings',
-            'تنظیمات SMS',
-            'تنظیمات پیامک',
-            'manage_options',
-            'mbp-sms-settings',
-            array($this, 'render_sms_settings_page')
-        );
-
-        add_submenu_page(
-            'mbp-bookings',
-            'تنظیمات درگاه پرداخت',
-            'درگاه پرداخت',
-            'manage_options',
-            'mbp-payment-settings',
-            array($this, 'render_payment_settings_page')
-        );
+       
     }
 
     public function dashboard_redirect_page()
@@ -788,7 +776,7 @@ JS;
         echo '
         <div style="max-width:800px;margin-top:20px;">
             <div id="mbp-sms-settings-container">
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
+                <div style="background:rgba(255, 255, 255, .06);border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
                     <div style="font-size:14px;color:#6b7280;margin-bottom:20px;">
                         در حال بارگذاری تنظیمات پیامک...
                     </div>
@@ -865,13 +853,57 @@ JS;
         });
         </script>
         ';
-        
         echo '</div>';
     }
 
-    // =========================
-    // Admin AJAX
-    // =========================
+    public function render_invoices_page()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die('دسترسی ندارید');
+        }
+
+        if (!$this->license_is_ok()) {
+            echo $this->render_license_required_box('admin');
+            return;
+        }
+
+        echo '<div class="wrap" style="direction:rtl;">';
+        echo '<h1>مدیریت فاکتورها</h1>';
+        
+        echo '
+        <div style="max-width:1200px;margin-top:20px;">
+            <div id="mbp-invoices-container">
+                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
+                    <div style="font-size:14px;color:#6b7280;margin-bottom:20px;">
+                        در حال بارگذاری فاکتورها...
+                    </div>
+                </div>
+            </div>
+        </div>
+        ';
+        
+        // JavaScript برای بارگذاری فاکتورها
+        echo '
+        <script>
+        jQuery(function($){
+            function loadInvoices(){
+                $.post(ajaxurl, {
+                    action: "mbp_get_invoices",
+                    nonce: "' . wp_create_nonce('mbp_admin_action_nonce') . '"
+                }, function(response){
+                    if(response.success){
+                        $("#mbp-invoices-container").html(response.data.html);
+                    }
+                });
+            }
+            
+            loadInvoices();
+        });
+        </script>
+        ';
+        
+        echo '</div>';
+    }
     public function admin_approve_booking()
     {
         if (!current_user_can('manage_options'))
@@ -1060,14 +1092,14 @@ public function ajax_get_services()
                                         <?php echo $service->is_active ? 'فعال' : 'غیرفعال'; ?>
                                     </span>
                                 </td>
-                                <td>
-                                    <button type="button" class="button button-small mbp-edit-service" data-id="<?php echo esc_attr($service->id); ?>">
+                                <td style="width: 300px; display: flex; gap: 10px;">
+                                    <button type="button" class="button button-small button-primary mbp-edit-service" data-id="<?php echo esc_attr($service->id); ?>">
                                         ویرایش
                                     </button>
-                                    <button type="button" class="button button-small mbp-toggle-service" data-id="<?php echo esc_attr($service->id); ?>" data-status="<?php echo $service->is_active; ?>">
+                                    <button type="button" class="button button-small button-primary mbp-toggle-service" data-id="<?php echo esc_attr($service->id); ?>" data-status="<?php echo $service->is_active; ?>">
                                         <?php echo $service->is_active ? 'غیرفعال' : 'فعال'; ?>
                                     </button>
-                                    <button type="button" class="button button-small button-link-delete mbp-delete-service" data-id="<?php echo esc_attr($service->id); ?>">
+                                    <button type="button" class="button button-small button-primary button-link-delete mbp-delete-service" data-id="<?php echo esc_attr($service->id); ?>">
                                         حذف
                                     </button>
                                 </td>
@@ -1084,21 +1116,13 @@ public function ajax_get_services()
                     <h3 style="margin-top:0;">تنظیمات سیستم پیامک</h3>
                     
                     <form id="mbp-sms-settings-form">
-                        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
+                        <div style="background:rgba(255, 255, 255, .06);border:1px solid rgba(75, 75, 75, 0.8);border-radius:10px;padding:20px;margin-bottom:20px;">
                             <h4 style="margin-top:0;">تنظیمات کلی</h4>
                             
-                            <div style="margin-bottom:15px;">
-                                <label style="font-weight:800;display:block;margin-bottom:5px;">درگاه پیامک</label>
-                                <select id="mbp-sms-gateway" name="gateway" class="regular-text" style="width:100%;">
-                                    <option value="kavenegar" <?php selected($sms_settings->gateway ?? 'kavenegar', 'kavenegar'); ?>>کاوه‌نگار</option>
-                                    <option value="ghasedak" <?php selected($sms_settings->gateway ?? 'kavenegar', 'ghasedak'); ?>>قاصدک</option>
-                                    <option value="melipayamak" <?php selected($sms_settings->gateway ?? 'kavenegar', 'melipayamak'); ?>>ملی پیامک</option>
-                                </select>
-                            </div>
                             
                             <div style="margin-bottom:15px;">
                                 <label style="font-weight:800;display:block;margin-bottom:5px;">API Key</label>
-                                <input type="text" id="mbp-sms-api-key" name="api_key" value="<?php echo esc_attr($sms_settings->api_key ?? ''); ?>" class="regular-text" style="width:100%;" placeholder="کلید API سرویس پیامک">
+                                <input type="text"  id="mbp-sms-api-key" name="api_key" value="<?php echo esc_attr($sms_settings->api_key ?? ''); ?>" class="regular-text" style="width:100%;" placeholder="کلید API سرویس پیامک">
                                 <p style="font-size:12px;color:#6b7280;margin-top:5px;">
                                     API Key را از پنل سرویس پیامک خود دریافت کنید
                                 </p>
@@ -1113,7 +1137,7 @@ public function ajax_get_services()
                             </div>
                         </div>
                         
-                        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
+                        <div style="background:rgba(255, 255, 255, .06);border:1px solid rgba(75, 75, 75, 0.8);border-radius:10px;padding:20px;margin-bottom:20px;">
                             <h4 style="margin-top:0;">تنظیمات ارسال</h4>
                             
                             <div style="margin-bottom:15px;">
@@ -1175,20 +1199,8 @@ public function ajax_get_services()
                     <h3 style="margin-top:0;">تنظیمات درگاه پرداخت</h3>
                     
                     <form id="mbp-payment-settings-form">
-                        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
-                            <h4 style="margin-top:0;">درگاه پیش‌فرض</h4>
-                            
-                            <div style="margin-bottom:15px;">
-                                <label style="font-weight:800;display:block;margin-bottom:5px;">انتخاب درگاه پرداخت</label>
-                                <select id="mbp-default-gateway" name="default_gateway" class="regular-text" style="width:100%;">
-                                    <option value="zarinpal" <?php selected($payment_settings['default_gateway'], 'zarinpal'); ?>>زرین‌پال</option>
-                                    <option value="idpay" <?php selected($payment_settings['default_gateway'], 'idpay'); ?>>آیدی پی</option>
-                                    <option value="nextpay" <?php selected($payment_settings['default_gateway'], 'nextpay'); ?>>نکست پی</option>
-                                </select>
-                            </div>
-                        </div>
                         
-                        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
+                        <div style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
                             <h4 style="margin-top:0;">تنظیمات زرین‌پال</h4>
                             
                             <div style="margin-bottom:15px;">
@@ -1200,7 +1212,7 @@ public function ajax_get_services()
                             </div>
                         </div>
                         
-                        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
+                        <div style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
                             <h4 style="margin-top:0;">تنظیمات آیدی پی</h4>
                             
                             <div style="margin-bottom:15px;">
@@ -1219,7 +1231,7 @@ public function ajax_get_services()
                             </div>
                         </div>
                         
-                        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
+                        <div style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
                             <h4 style="margin-top:0;">تنظیمات نکست پی</h4>
                             
                             <div style="margin-bottom:15px;">
@@ -1244,7 +1256,7 @@ public function ajax_get_services()
                     <h3 style="margin-top:0;">تنظیمات عمومی</h3>
                     
                     <form id="mbp-general-settings-form">
-                        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
+                        <div style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
                             <h4 style="margin-top:0;">تنظیمات رزرو</h4>
                             
                             <div style="margin-bottom:15px;">
@@ -1264,7 +1276,7 @@ public function ajax_get_services()
                             </div>
                         </div>
                         
-                        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
+                        <div style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
                             <h4 style="margin-top:0;">تنظیمات نمایش</h4>
                             
                             <div style="margin-bottom:15px;">
@@ -1349,7 +1361,26 @@ public function ajax_get_services()
             display: none;
         }
         .mbp-tab-pane.active {
-            display: block;
+            display: flex;
+            flex-direction: column;
+            gap:20px;
+        }
+
+        .button-primary{
+          padding: 10px;
+            border-radius: 10px;
+            background:rgba(255,255,255,.06);
+            border:1px solid rgba(255,255,255,.12);
+            color: #ccccccff;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.5s;
+        }
+
+        .button-primary:hover{
+             background: #2271b1;
+            color: white;
+            border-color: #2271b1;
         }
 
         .mbp-settings-tab{
@@ -1380,6 +1411,10 @@ public function ajax_get_services()
         .service-status.inactive {
             background: rgba(239, 68, 68, .2);
             color: #ef4444;
+        }
+        .regular-text{
+            padding: 10px; 
+            width:300px ;
         }
     </style>
     
@@ -1786,9 +1821,9 @@ public function ajax_get_services()
 
         ob_start();
         ?>
-        <div style="max-width:600px;">
+        <div style="max-width:600px; background:rgba(255, 255, 255, .06);">
             <form id="mbp-sms-settings-form">
-                <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
+                <div style="background:rgba(255, 255, 255, .06);border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:20px;">
                     <h3 style="margin-top:0;">تنظیمات کلی</h3>
                     
                     <div style="margin-bottom:15px;">
@@ -1917,7 +1952,6 @@ public function ajax_get_services()
                 
                 button.prop('disabled', true);
                 button.text('در حال ارسال...');
-                
                 $.post(ajaxurl, {
                     action: 'mbp_test_sms',
                     phone: phone,
@@ -2168,6 +2202,264 @@ public function ajax_get_services()
         update_option('mbp_nextpay_api_key', $nextpay_api_key);
 
         wp_send_json_success(array('message' => 'تنظیمات درگاه پرداخت با موفقیت ذخیره شد'));
+    }
+
+    // =========================
+    // INVOICES AJAX
+    // =========================
+    public function ajax_get_invoices()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'دسترسی ندارید'));
+        }
+
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
+            wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+        }
+
+        global $wpdb;
+        $appointments_table = $wpdb->prefix . 'mbp_appointments';
+        $services_table = $wpdb->prefix . 'mbp_services';
+        $payments_table = $wpdb->prefix . 'mbp_payments';
+
+        // دریافت فاکتورها (رزروهای پرداخت شده)
+        $invoices = $wpdb->get_results(
+            "SELECT a.*, s.name as service_name, s.price as service_price, p.amount as paid_amount, p.ref_id, p.created_at as payment_date
+             FROM $appointments_table a 
+             LEFT JOIN $services_table s ON a.service_id = s.id 
+             LEFT JOIN $payments_table p ON a.id = p.appointment_id AND p.status = 'completed'
+             WHERE a.payment_status = 'paid'
+             ORDER BY a.created_at DESC"
+        );
+
+        ob_start();
+        ?>
+        <div style="max-width:1200px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h3 style="margin:0;">لیست فاکتورها</h3>
+                <div style="display:flex;gap:10px;">
+                    <button type="button" id="mbp-export-invoices" class="button" style="font-weight:800;">
+                        📊 خروجی Excel
+                    </button>
+                    <button type="button" id="mbp-create-manual-invoice" class="button button-primary" style="font-weight:800;">
+                        + ایجاد فاکتور دستی
+                    </button>
+                </div>
+            </div>
+            
+            <?php if (empty($invoices)): ?>
+                <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:40px;text-align:center;">
+                    <div style="font-size:16px;color:#6b7280;margin-bottom:15px;">هیچ فاکتوری یافت نشد</div>
+                    <div style="font-size:14px;color:#9ca3af;">فاکتورها بعد از پرداخت موفق رزروها ایجاد میشوند</div>
+                </div>
+            <?php else: ?>
+                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th width="80">شماره فاکتور</th>
+                                <th>مشتری</th>
+                                <th>خدمت</th>
+                                <th width="120">مبلغ</th>
+                                <th width="120">تاریخ پرداخت</th>
+                                <th width="100">شماره پیگیری</th>
+                                <th width="100">وضعیت</th>
+                                <th width="120">عملیات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($invoices as $invoice): ?>
+                            <tr>
+                                <td>
+                                    <strong>#<?php echo esc_html($invoice->id); ?></strong>
+                                </td>
+                                <td>
+                                    <div style="font-weight:600;"><?php echo esc_html($invoice->customer_name); ?></div>
+                                    <div style="font-size:12px;color:#6b7280;"><?php echo esc_html($invoice->customer_email); ?></div>
+                                    <?php if ($invoice->customer_phone): ?>
+                                        <div style="font-size:12px;color:#6b7280;"><?php echo esc_html($invoice->customer_phone); ?></div>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <div style="font-weight:600;"><?php echo esc_html($invoice->service_name ?: 'خدمت عمومی'); ?></div>
+                                    <div style="font-size:12px;color:#6b7280;">
+                                        <?php echo $this->fa_date_from_timestamp(strtotime($invoice->time), 'Y/m/d', true); ?>
+                                        -
+                                        <?php echo date('H:i', strtotime($invoice->time)); ?>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span style="font-weight:700;color:#059669;">
+                                        <?php echo number_format($invoice->paid_amount ?: $invoice->service_price); ?> تومان
+                                    </span>
+                                </td>
+                                <td>
+                                    <?php if ($invoice->payment_date): ?>
+                                        <?php echo $this->fa_date_from_timestamp(strtotime($invoice->payment_date), 'Y/m/d H:i', true); ?>
+                                    <?php else: ?>
+                                        <span style="color:#6b7280;">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($invoice->ref_id): ?>
+                                        <code style="font-size:11px;"><?php echo esc_html($invoice->ref_id); ?></code>
+                                    <?php else: ?>
+                                        <span style="color:#6b7280;">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span class="invoice-status paid" style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(34,197,94,.2);color:#22c55e;">
+                                        پرداخت شده
+                                    </span>
+                                </td>
+                                <td>
+                                    <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                                        <button type="button" class="button button-small mbp-view-invoice" data-id="<?php echo esc_attr($invoice->id); ?>" title="مشاهده فاکتور">
+                                            👁️
+                                        </button>
+                                        <button type="button" class="button button-small mbp-print-invoice" data-id="<?php echo esc_attr($invoice->id); ?>" title="چاپ فاکتور">
+                                            🖨️
+                                        </button>
+                                        <button type="button" class="button button-small mbp-send-invoice" data-id="<?php echo esc_attr($invoice->id); ?>" title="ارسال ایمیل">
+                                            📧
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div style="margin-top:20px;padding:15px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;">
+                        <div style="font-size:14px;color:#6b7280;">
+                            مجموع <?php echo count($invoices); ?> فاکتور
+                        </div>
+                        <div style="font-size:16px;font-weight:700;color:#059669;">
+                            کل درآمد: <?php 
+                                $total_income = array_sum(array_map(function($inv) { 
+                                    return $inv->paid_amount ?: $inv->service_price; 
+                                }, $invoices));
+                                echo number_format($total_income); 
+                            ?> تومان
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </div>
+        
+        <!-- Modal برای مشاهده فاکتور -->
+        <div id="mbp-invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;">
+            <div style="width:min(800px,92vw);margin:5vh auto;background:#fff;border-radius:14px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-height:90vh;overflow-y:auto;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:20px;">
+                    <div style="font-weight:900;font-size:16px;" id="mbp-invoice-modal-title">مشاهده فاکتور</div>
+                    <button type="button" class="button" id="mbp-invoice-modal-close">بستن</button>
+                </div>
+                
+                <div id="mbp-invoice-content">
+                    <!-- محتوای فاکتور اینجا لود میشود -->
+                </div>
+            </div>
+        </div>
+        
+        <script>
+        jQuery(function($){
+            const nonce = '<?php echo wp_create_nonce("mbp_admin_action_nonce"); ?>';
+            
+            // مشاهده فاکتور
+            $(document).on('click', '.mbp-view-invoice', function(){
+                const invoiceId = $(this).data('id');
+                $('#mbp-invoice-content').html('<div style="text-align:center;padding:20px;">در حال بارگذاری...</div>');
+                $('#mbp-invoice-modal').show();
+                
+                $.post(ajaxurl, {
+                    action: 'mbp_get_invoice_details',
+                    invoice_id: invoiceId,
+                    nonce: nonce
+                }, function(response){
+                    if(response.success){
+                        $('#mbp-invoice-content').html(response.data.html);
+                    }else{
+                        $('#mbp-invoice-content').html('<div style="color:#ef4444;text-align:center;padding:20px;">خطا در بارگذاری فاکتور</div>');
+                    }
+                });
+            });
+            
+            // چاپ فاکتور
+            $(document).on('click', '.mbp-print-invoice', function(){
+                const invoiceId = $(this).data('id');
+                window.open(ajaxurl + '?action=mbp_print_invoice&invoice_id=' + invoiceId + '&nonce=' + nonce, '_blank');
+            });
+            
+            // ارسال ایمیل فاکتور
+            $(document).on('click', '.mbp-send-invoice', function(){
+                const invoiceId = $(this).data('id');
+                const button = $(this);
+                const originalText = button.text();
+                
+                button.prop('disabled', true);
+                button.text('در حال ارسال...');
+                
+                $.post(ajaxurl, {
+                    action: 'mbp_send_invoice_email',
+                    invoice_id: invoiceId,
+                    nonce: nonce
+                }, function(response){
+                    if(response.success){
+                        alert('فاکتور با موفقیت ارسال شد');
+                    }else{
+                        alert(response.data.message || 'خطا در ارسال فاکتور');
+                    }
+                }).always(function(){
+                    button.prop('disabled', false);
+                    button.text(originalText);
+                });
+            });
+            
+            // بستن مدال
+            $('#mbp-invoice-modal-close').on('click', function(){
+                $('#mbp-invoice-modal').hide();
+            });
+            
+            // خروجی Excel
+            $('#mbp-export-invoices').on('click', function(){
+                window.location.href = ajaxurl + '?action=mbp_export_invoices&nonce=' + nonce;
+            });
+        });
+        </script>
+        <?php
+        
+        $html = ob_get_clean();
+        wp_send_json_success(array('html' => $html));
+    }
+
+    public function ajax_create_invoice()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'دسترسی ندارید'));
+        }
+
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
+            wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+        }
+
+        // پیاده‌سازی ایجاد فاکتور دستی
+        wp_send_json_success(array('message' => 'فاکتور ایجاد شد'));
+    }
+
+    public function ajax_update_invoice_status()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'دسترسی ندارید'));
+        }
+
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
+            wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+        }
+
+        // پیاده‌سازی آپدیت وضعیت فاکتور
+        wp_send_json_success(array('message' => 'وضعیت فاکتور آپدیت شد'));
     }
 
     public function ajax_initiate_payment()
@@ -4056,6 +4348,7 @@ private function render_schedule_grid_html($appointments, $week_start_ymd, $sett
             window.MBP_ADMIN_NONCE = <?php echo wp_json_encode($nonce); ?>;
             window.MBP_WEEK_START = <?php echo wp_json_encode($week_start_ymd); ?>;
         </script>
+        <script src="<?php echo plugin_dir_url(__FILE__) . 'invoices-functions.js'; ?>"></script>
     </head>
 
     <body>
@@ -4075,6 +4368,9 @@ private function render_schedule_grid_html($appointments, $week_start_ymd, $sett
                 </a>
                 <a class="item" href="#" data-view="services">
                     ⚙️ خدمات و تنظیمات
+                </a>
+                <a class="item" href="#" data-view="invoices">
+                    🧾 فاکتورها
                 </a>
             </aside>
 
@@ -4183,6 +4479,24 @@ private function render_schedule_grid_html($appointments, $week_start_ymd, $sett
 
         <div class="toast" id="mbp-toast">ذخیره شد</div>
 
+        <!-- Templates -->
+        <div id="tpl-invoices" style="display:none">
+            <h2 style="margin-top:0;margin-bottom:20px;">🧾 مدیریت فاکتورها</h2>
+            <div id="mbp-invoices-container">
+                <div style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:30px;">
+                    <div style="text-align:center;color:#cbd5e1;">
+                        <div style="margin-bottom:15px;">
+                            <div class="mbp-loading" style="width:40px;height:40px;margin:0 auto 15px;"></div>
+                            <div>در حال بارگذاری فاکتورها...</div>
+                        </div>
+                        <div style="font-size:12px;opacity:.7;">
+                            اگر بارگذاری طول کشید، صفحه را رفرش کنید
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <script>
             (function () {
                 function ready(fn) {
@@ -4262,6 +4576,11 @@ private function render_schedule_grid_html($appointments, $week_start_ymd, $sett
                                 mount('tpl-custom_fields'); 
                                 setTimeout(() => {
                                     initSlots();
+                                }, 100);
+                            } else if (name === 'invoices') { 
+                                mount('tpl-invoices'); 
+                                setTimeout(() => {
+                                    loadInvoices();
                                 }, 100);
                             } else {
                                 view.innerHTML = `<h2 style="margin-top:0">${name}</h2><div style="opacity:.85;padding:20px;text-align:center;">بزودی...</div>`;
