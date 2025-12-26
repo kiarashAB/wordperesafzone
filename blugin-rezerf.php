@@ -3,7 +3,7 @@
  * Plugin Name: blugin-rezerf
  * Plugin URI: #
  * Description: ورژن بتا رزو نوبت دهی
- * Version: 0.8.0
+ * Version: 0.8.2
  * Author: kiarash abdollahi
  * Author URI: #
  * License: GPL2
@@ -14,7 +14,17 @@ if (!defined('ABSPATH')) exit;
 
 define('MBP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('MBP_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('MBP_VERSION', '0.8.0');
+if ( ! function_exists('mbp_get_plugin_version') ) {
+  function mbp_get_plugin_version() {
+    if ( ! function_exists('get_file_data') ) {
+      require_once ABSPATH . 'wp-includes/functions.php';
+    }
+    $data = get_file_data(__FILE__, array('Version' => 'Version'), 'plugin');
+    return $data['Version'] ?? '0.0.0';
+  }
+}
+define('MBP_VERSION', mbp_get_plugin_version());
+
 
 // لود کلاس‌ها
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-database.php';
@@ -67,16 +77,21 @@ function mbp_create_pages() {
 }
 
 // اجرای افزونه (مهم: بعد از آماده شدن وردپرس)
-function mbp_run_plugin() {
-    $plugin = new MBP_Core();
-    $plugin->run();
-}
-add_action('plugins_loaded', 'mbp_run_plugin');
+add_action('init', function () {
 
-// آپدیت جداول هنگام آپدیت پلاگین
-function mbp_update_tables() {
-    if (class_exists('MBP_Database')) {
-        MBP_Database::update_tables();
+    $puc_path = plugin_dir_path(__FILE__) . 'includes/plugin-update-checker-5.6/plugin-update-checker.php';
+    if ( ! file_exists($puc_path) ) {
+        return;
     }
-}
-add_action('upgrader_process_complete', 'mbp_update_tables');
+
+    require_once $puc_path;
+
+    $updateChecker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
+        'https://github.com/kiarashAB/wordperesafzone',
+        __FILE__,
+        'blugin-rezerf'
+    );
+
+    // استفاده از GitHub Releases
+    $updateChecker->getVcsApi()->enableReleaseAssets();
+});
