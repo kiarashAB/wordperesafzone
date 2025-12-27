@@ -50,6 +50,9 @@ class MBP_Core
         // License AJAX (admin)
         add_action('wp_ajax_mbp_activate_license', array($this, 'ajax_activate_license'));
         add_action('wp_ajax_mbp_deactivate_license_local', array($this, 'ajax_deactivate_license_local'));
+        add_action('wp_ajax_mbp_activate_invoice_license', [$this, 'ajax_activate_invoice_license']);
+        add_action('wp_ajax_mbp_deactivate_invoice_license_local', [$this, 'ajax_deactivate_invoice_license_local']);
+
 
         // Services AJAX
         add_action('wp_ajax_mbp_get_services', array($this, 'ajax_get_services'));
@@ -96,9 +99,18 @@ class MBP_Core
         // Admin assets
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
 
+        add_action('wp_ajax_mbp_invoice_create', [$this, 'ajax_invoice_create']);
+        add_action('wp_ajax_mbp_get_invoices', [$this, 'ajax_get_invoices']);
+        add_action('wp_ajax_mbp_invoice_delete', [$this, 'ajax_invoice_delete']);
+        add_action('wp_ajax_mbp_invoice_print', [$this, 'ajax_invoice_print']);
+
         // Elementor support
         add_action('elementor/widgets/widgets_registered', array($this, 'register_elementor_widgets'));
         add_action('elementor/elements/categories_registered', array($this, 'add_elementor_widget_categories'));
+        require_once MBP_PLUGIN_DIR . 'includes/class-mbp-invoice.php';
+
+        // ✅ خیلی مهم: این new باعث میشه هوک‌های Invoice فعال بشن
+        $this->invoice = new MBP_Invoice();
     }
 
     public function run()
@@ -196,6 +208,38 @@ class MBP_Core
     // =========================
     // LICENSE AJAX
     // =========================
+
+    public function ajax_activate_invoice_license()
+    {
+        check_ajax_referer('mbp_license_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'دسترسی ندارید']);
+        }
+
+        $key = isset($_POST['license_key']) ? sanitize_text_field($_POST['license_key']) : '';
+        $res = MBP_Invoice_License::activate($key);
+
+        if (!empty($res['ok'])) {
+            wp_send_json_success(['message' => $res['message'] ?? 'فعال شد ✅']);
+        }
+
+        wp_send_json_error(['message' => $res['message'] ?? 'ناموفق']);
+    }
+
+    public function ajax_deactivate_invoice_license_local()
+    {
+        check_ajax_referer('mbp_license_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'دسترسی ندارید']);
+        }
+
+        MBP_Invoice_License::deactivate_local();
+        wp_send_json_success(['message' => 'لایسنس فاکتور (محلی) غیرفعال شد']);
+    }
+
+
     public function ajax_activate_license()
     {
         if (!current_user_can('manage_options')) {
@@ -605,212 +649,300 @@ JS;
         }
 
         $license_ok = $this->license_is_ok();
+        $invoice_license_ok = $this->invoice_license_is_ok();
+
         $dashboard_url = admin_url('admin-post.php?action=mbp_dashboard_app');
         $nonce = wp_create_nonce('mbp_license_nonce');
 
         echo '<div class="wrap" style="direction:rtl;">';
         echo '<h1 style="margin-bottom:14px;">' . esc_html__('پنل مدیریت رزرو', 'my-booking-plugin') . '</h1>';
 
+        // کارت اصلی رزرو
         echo '
-        <div style="
-            max-width: 720px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;
-            box-shadow: 0 8px 22px rgba(0,0,0,.06);
-        ">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-                <div>
-                    <div style="font-size:14px;opacity:.85;margin-bottom:6px;">افزونه</div>
-                    <div style="font-size:18px;font-weight:900;">افزونه رزرو نوبت</div>
-                </div>';
+    <div style="
+        max-width: 720px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;
+        box-shadow: 0 8px 22px rgba(0,0,0,.06);
+        margin-bottom:14px;
+    ">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+                <div style="font-size:14px;opacity:.85;margin-bottom:6px;">افزونه</div>
+                <div style="font-size:18px;font-weight:900;">افزونه رزرو نوبت</div>
+            </div>';
 
         if ($license_ok) {
             echo '<div style="
-                padding:6px 10px;border-radius:999px;background:rgba(0,163,42,.12);
-                border:1px solid rgba(0,163,42,.25);color:#0a5a22;font-weight:800;font-size:12px;white-space:nowrap;
-            ">فعال ✅</div>';
+            padding:6px 10px;border-radius:999px;background:rgba(0,163,42,.12);
+            border:1px solid rgba(0,163,42,.25);color:#0a5a22;font-weight:800;font-size:12px;white-space:nowrap;
+        ">فعال ✅</div>';
         } else {
             echo '<div style="
-                padding:6px 10px;border-radius:999px;background:rgba(214,54,56,.10);
-                border:1px solid rgba(214,54,56,.25);color:#7a1112;font-weight:800;font-size:12px;white-space:nowrap;
-            ">نیاز به فعال‌سازی ❌</div>';
+            padding:6px 10px;border-radius:999px;background:rgba(214,54,56,.10);
+            border:1px solid rgba(214,54,56,.25);color:#7a1112;font-weight:800;font-size:12px;white-space:nowrap;
+        ">نیاز به فعال‌سازی ❌</div>';
         }
 
         echo '</div>
 
-            <div style="margin-top:12px;line-height:1.9;color:#374151;">
-                از اینجا می‌تونی وارد <strong>پنل تمام صفحه</strong> بشی و رزروها رو مدیریت کنی.
-            </div>
+        <div style="margin-top:12px;line-height:1.9;color:#374151;">
+            از اینجا می‌تونی وارد <strong>پنل تمام صفحه</strong> بشی و رزروها رو مدیریت کنی.
+        </div>
 
-            <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">';
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">';
 
         if ($license_ok) {
             echo '<a href="' . esc_url($dashboard_url) . '" class="button button-primary" style="font-weight:800;padding:6px 14px;">
-                    ورود به پنل مدیریت
-                  </a>
-                  <button type="button" id="mbp-license-deactivate" class="button" style="font-weight:800;padding:6px 14px;">
-                    غیرفعال‌سازی (محلی)
-                  </button>';
+                ورود به پنل مدیریت
+              </a>
+              <button type="button" id="mbp-license-deactivate" class="button" style="font-weight:800;padding:6px 14px;">
+                غیرفعال‌سازی (محلی)
+              </button>';
         } else {
             echo '<button type="button" id="mbp-license-open" class="button button-primary" style="font-weight:800;padding:6px 14px;">
-                    فعال‌سازی / لایسنس
-                  </button>';
+                فعال‌سازی / لایسنس
+              </button>';
         }
 
         echo '</div>
 
-            <div style="margin-top:10px;font-size:12px;opacity:.75;">
-                نکته: برای نمایش جدول رزرو در سایت از شورتکد <code>[mbp_public_schedule]</code> استفاده کن.
-            </div>
-        </div>';
+        <div style="margin-top:10px;font-size:12px;opacity:.75;">
+            نکته: برای نمایش جدول رزرو در سایت از شورتکد <code>[mbp_public_schedule]</code> استفاده کن.
+        </div>
+    </div>';
 
-        // Modal
+        // کارت فاکتور (ووکامرس)
         echo '
-        <div id="mbp-license-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;">
-            <div style="width:min(520px,92vw);margin:10vh auto;background:#fff;border-radius:14px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-                    <div style="font-weight:900;">فعال‌سازی لایسنس</div>
-                    <button type="button" class="button" id="mbp-license-close">بستن</button>
-                </div>
+    <div style="
+        max-width: 720px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;
+        box-shadow: 0 8px 22px rgba(0,0,0,.06);
+    ">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+                <div style="font-size:14px;opacity:.85;margin-bottom:6px;">ماژول</div>
+                <div style="font-size:18px;font-weight:900;">فاکتور (ویژه ووکامرس)</div>
+            </div>';
 
-                <div style="margin-top:12px;">
-                    <label style="font-weight:800;display:block;margin-bottom:6px;">کد لایسنس</label>
-                    <input id="mbp-license-key" type="text" class="regular-text" style="width:100%;" placeholder="XXXX-XXXX-XXXX">
-                    <div style="font-size:12px;opacity:.75;margin-top:6px;">دامنه این سایت به صورت خودکار ارسال می‌شود.</div>
-                </div>
-
-                <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-                    <button type="button" class="button button-primary" id="mbp-license-activate">فعال‌سازی</button>
-                    <span id="mbp-license-msg" style="font-size:12px;color:#6b7280;"></span>
-                </div>
-            </div>
-        </div>';
-
-        // Script
-        echo '
-        <script>
-        (function(){
-            const ajaxUrl = ' . wp_json_encode(admin_url('admin-ajax.php')) . ';
-            const nonce   = ' . wp_json_encode($nonce) . ';
-
-            const openBtn = document.getElementById("mbp-license-open");
-            const modal   = document.getElementById("mbp-license-modal");
-            const closeBtn= document.getElementById("mbp-license-close");
-            const keyInp  = document.getElementById("mbp-license-key");
-            const actBtn  = document.getElementById("mbp-license-activate");
-            const msgEl   = document.getElementById("mbp-license-msg");
-            const deactBtn= document.getElementById("mbp-license-deactivate");
-
-            function openModal(){
-                if(!modal) return;
-                modal.style.display = "block";
-                if(keyInp) keyInp.focus();
-                if(msgEl) msgEl.textContent = "";
-            }
-            function closeModal(){
-                if(!modal) return;
-                modal.style.display = "none";
-            }
-
-            if(openBtn) openBtn.addEventListener("click", openModal);
-            if(closeBtn) closeBtn.addEventListener("click", closeModal);
-            if(modal) modal.addEventListener("click", (e)=>{ if(e.target === modal) closeModal(); });
-
-            async function post(action, extra){
-                const fd = new FormData();
-                fd.append("action", action);
-                fd.append("nonce", nonce);
-                if(extra){
-                    Object.keys(extra).forEach(k => fd.append(k, extra[k]));
-                }
-                const res = await fetch(ajaxUrl, { method:"POST", body: fd });
-                return await res.json();
-            }
-
-            if(actBtn){
-                actBtn.addEventListener("click", async ()=>{
-                    const key = (keyInp && keyInp.value ? keyInp.value : "").trim();
-                    if(!key){
-                        msgEl.textContent = "لایسنس را وارد کن";
-                        return;
-                    }
-                    msgEl.textContent = "در حال بررسی...";
-                    actBtn.disabled = true;
-
-                    try{
-                        const data = await post("mbp_activate_license", { license_key: key });
-                        if(!data.success){
-                            msgEl.textContent = (data && data.data && data.data.message) ? data.data.message : "ناموفق";
-                            actBtn.disabled = false;
-                            return;
-                        }
-                        msgEl.textContent = (data && data.data && data.data.message) ? data.data.message : "فعال شد ✅";
-                        setTimeout(()=> location.reload(), 700);
-                    }catch(e){
-                        msgEl.textContent = "خطای شبکه";
-                        actBtn.disabled = false;
-                    }
-                });
-            }
-
-            if(deactBtn){
-                deactBtn.addEventListener("click", async ()=>{
-                    if(!confirm("لایسنس روی همین سایت غیرفعال شود؟")) return;
-                    try{
-                        await post("mbp_deactivate_license_local", {});
-                    }catch(e){}
-                    location.reload();
-                });
-            }
-        })();
-        </script>';
-
-        echo '</div>';
-    }
-
-    public function render_sms_settings_page()
-    {
-        if (!current_user_can('manage_options')) {
-            wp_die('دسترسی ندارید');
+        if ($invoice_license_ok) {
+            echo '<div style="
+            padding:6px 10px;border-radius:999px;background:rgba(0,163,42,.12);
+            border:1px solid rgba(0,163,42,.25);color:#0a5a22;font-weight:800;font-size:12px;white-space:nowrap;
+        ">فعال ✅</div>';
+        } else {
+            echo '<div style="
+            padding:6px 10px;border-radius:999px;background:rgba(214,54,56,.10);
+            border:1px solid rgba(214,54,56,.25);color:#7a1112;font-weight:800;font-size:12px;white-space:nowrap;
+        ">غیرفعال / نیاز به لایسنس ❌</div>';
         }
 
-        if (!$this->license_is_ok()) {
-            echo $this->render_license_required_box('admin');
-            return;
+        echo '</div>
+
+        <div style="margin-top:12px;line-height:1.9;color:#374151;">
+            این بخش برای ساخت/مدیریت فاکتورهای مرتبط با سفارش‌های <strong>ووکامرس</strong> استفاده می‌شود.
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">';
+
+        if ($invoice_license_ok) {
+            echo '<button type="button" id="mbp-invoice-license-deactivate" class="button" style="font-weight:800;padding:6px 14px;">
+                غیرفعال‌سازی لایسنس فاکتور (محلی)
+              </button>';
+        } else {
+            echo '<button type="button" id="mbp-invoice-license-open" class="button button-primary" style="font-weight:800;padding:6px 14px;">
+                فعال‌سازی / لایسنس فاکتور
+              </button>';
         }
 
-        echo '<div class="wrap" style="direction:rtl;">';
-        echo '<h1>تنظیمات سیستم پیامک</h1>';
+        echo '</div>
 
+        <div style="margin-top:10px;font-size:12px;opacity:.75;">
+            نکته: تا وقتی لایسنس فاکتور فعال نشود، تب فاکتورها باید غیرفعال/کم‌رنگ باشد.
+        </div>
+    </div>';
+
+        // مودال لایسنس رزرو
         echo '
-        <div style="max-width:800px;margin-top:20px;">
-            <div id="mbp-sms-settings-container">
-                <div style="background:rgba(255, 255, 255, .06);border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
-                    <div style="font-size:14px;color:#6b7280;margin-bottom:20px;">
-                        در حال بارگذاری تنظیمات پیامک...
-                    </div>
-                </div>
+    <div id="mbp-license-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;">
+        <div style="width:min(520px,92vw);margin:10vh auto;background:#fff;border-radius:14px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                <div style="font-weight:900;">فعال‌سازی لایسنس رزرو</div>
+                <button type="button" class="button" id="mbp-license-close">بستن</button>
+            </div>
+
+            <div style="margin-top:12px;">
+                <label style="font-weight:800;display:block;margin-bottom:6px;">کد لایسنس رزرو</label>
+                <input id="mbp-license-key" type="text" class="regular-text" style="width:100%;" placeholder="XXXX-XXXX-XXXX">
+                <div style="font-size:12px;opacity:.75;margin-top:6px;">دامنه این سایت به صورت خودکار بررسی می‌شود.</div>
+            </div>
+
+            <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <button type="button" class="button button-primary" id="mbp-license-activate">فعال‌سازی</button>
+                <span id="mbp-license-msg" style="font-size:12px;color:#6b7280;"></span>
             </div>
         </div>
-        ';
+    </div>';
 
-        // JavaScript برای بارگذاری تنظیمات
+        // مودال لایسنس فاکتور
         echo '
-        <script>
-        jQuery(function($){
-            function loadSMSSettings(){
-                $.post(ajaxurl, {
-                    action: "mbp_get_sms_settings",
-                    nonce: "' . wp_create_nonce('mbp_admin_action_nonce') . '"
-                }, function(response){
-                    if(response.success){
-                        $("#mbp-sms-settings-container").html(response.data.html);
-                    }
-                });
+    <div id="mbp-invoice-license-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;">
+        <div style="width:min(520px,92vw);margin:10vh auto;background:#fff;border-radius:14px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                <div style="font-weight:900;">فعال‌سازی لایسنس فاکتور</div>
+                <button type="button" class="button" id="mbp-invoice-license-close">بستن</button>
+            </div>
+
+            <div style="margin-top:12px;">
+                <label style="font-weight:800;display:block;margin-bottom:6px;">کد لایسنس فاکتور</label>
+                <input id="mbp-invoice-license-key" type="text" class="regular-text" style="width:100%;" placeholder="XXXX-XXXX-XXXX">
+                <div style="font-size:12px;opacity:.75;margin-top:6px;">دامنه این سایت به صورت خودکار بررسی می‌شود.</div>
+            </div>
+
+            <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <button type="button" class="button button-primary" id="mbp-invoice-license-activate">فعال‌سازی</button>
+                <span id="mbp-invoice-license-msg" style="font-size:12px;color:#6b7280;"></span>
+            </div>
+        </div>
+    </div>';
+
+        // اسکریپت (هر دو لایسنس)
+        echo '
+    <script>
+    (function(){
+        const ajaxUrl = ' . wp_json_encode(admin_url('admin-ajax.php')) . ';
+        const nonce   = ' . wp_json_encode($nonce) . ';
+
+        async function post(action, extra){
+            const fd = new FormData();
+            fd.append("action", action);
+            fd.append("nonce", nonce);
+            if(extra){
+                Object.keys(extra).forEach(k => fd.append(k, extra[k]));
             }
-            
-            loadSMSSettings();
-        });
-        </script>
-        ';
+            const res = await fetch(ajaxUrl, { method:"POST", body: fd });
+            return await res.json();
+        }
+
+        // ====== رزرو ======
+        const openBtn   = document.getElementById("mbp-license-open");
+        const modal     = document.getElementById("mbp-license-modal");
+        const closeBtn  = document.getElementById("mbp-license-close");
+        const keyInp    = document.getElementById("mbp-license-key");
+        const actBtn    = document.getElementById("mbp-license-activate");
+        const msgEl     = document.getElementById("mbp-license-msg");
+        const deactBtn  = document.getElementById("mbp-license-deactivate");
+
+        function openModal(){
+            if(!modal) return;
+            modal.style.display = "block";
+            if(keyInp) keyInp.focus();
+            if(msgEl) msgEl.textContent = "";
+        }
+        function closeModal(){
+            if(!modal) return;
+            modal.style.display = "none";
+        }
+
+        if(openBtn) openBtn.addEventListener("click", openModal);
+        if(closeBtn) closeBtn.addEventListener("click", closeModal);
+        if(modal) modal.addEventListener("click", (e)=>{ if(e.target === modal) closeModal(); });
+
+        if(actBtn){
+            actBtn.addEventListener("click", async ()=>{
+                const key = (keyInp && keyInp.value ? keyInp.value : "").trim();
+                if(!key){
+                    if(msgEl) msgEl.textContent = "لایسنس را وارد کن";
+                    return;
+                }
+                if(msgEl) msgEl.textContent = "در حال بررسی...";
+                actBtn.disabled = true;
+
+                try{
+                    const data = await post("mbp_activate_license", { license_key: key });
+                    if(!data.success){
+                        if(msgEl) msgEl.textContent = (data && data.data && data.data.message) ? data.data.message : "ناموفق";
+                        actBtn.disabled = false;
+                        return;
+                    }
+                    if(msgEl) msgEl.textContent = (data && data.data && data.data.message) ? data.data.message : "فعال شد ✅";
+                    setTimeout(()=> location.reload(), 700);
+                }catch(e){
+                    if(msgEl) msgEl.textContent = "خطای شبکه";
+                    actBtn.disabled = false;
+                }
+            });
+        }
+
+        if(deactBtn){
+            deactBtn.addEventListener("click", async ()=>{
+                if(!confirm("لایسنس رزرو روی همین سایت غیرفعال شود؟")) return;
+                try{
+                    await post("mbp_deactivate_license_local", {});
+                }catch(e){}
+                location.reload();
+            });
+        }
+
+        // ====== فاکتور ======
+        const invOpenBtn  = document.getElementById("mbp-invoice-license-open");
+        const invModal    = document.getElementById("mbp-invoice-license-modal");
+        const invCloseBtn = document.getElementById("mbp-invoice-license-close");
+        const invKeyInp   = document.getElementById("mbp-invoice-license-key");
+        const invActBtn   = document.getElementById("mbp-invoice-license-activate");
+        const invMsgEl    = document.getElementById("mbp-invoice-license-msg");
+        const invDeactBtn = document.getElementById("mbp-invoice-license-deactivate");
+
+        function invOpenModal(){
+            if(!invModal) return;
+            invModal.style.display = "block";
+            if(invKeyInp) invKeyInp.focus();
+            if(invMsgEl) invMsgEl.textContent = "";
+        }
+        function invCloseModal(){
+            if(!invModal) return;
+            invModal.style.display = "none";
+        }
+
+        if(invOpenBtn) invOpenBtn.addEventListener("click", invOpenModal);
+        if(invCloseBtn) invCloseBtn.addEventListener("click", invCloseModal);
+        if(invModal) invModal.addEventListener("click", (e)=>{ if(e.target === invModal) invCloseModal(); });
+
+        if(invActBtn){
+            invActBtn.addEventListener("click", async ()=>{
+                const key = (invKeyInp && invKeyInp.value ? invKeyInp.value : "").trim();
+                if(!key){
+                    if(invMsgEl) invMsgEl.textContent = "لایسنس فاکتور را وارد کن";
+                    return;
+                }
+                if(invMsgEl) invMsgEl.textContent = "در حال بررسی...";
+                invActBtn.disabled = true;
+
+                try{
+                    const data = await post("mbp_activate_invoice_license", { license_key: key });
+                    if(!data.success){
+                        if(invMsgEl) invMsgEl.textContent = (data && data.data && data.data.message) ? data.data.message : "ناموفق";
+                        invActBtn.disabled = false;
+                        return;
+                    }
+                    if(invMsgEl) invMsgEl.textContent = (data && data.data && data.data.message) ? data.data.message : "لایسنس فاکتور فعال شد ✅";
+                    setTimeout(()=> location.reload(), 700);
+                }catch(e){
+                    if(invMsgEl) invMsgEl.textContent = "خطای شبکه";
+                    invActBtn.disabled = false;
+                }
+            });
+        }
+
+        if(invDeactBtn){
+            invDeactBtn.addEventListener("click", async ()=>{
+                if(!confirm("لایسنس فاکتور روی همین سایت غیرفعال شود؟")) return;
+                try{
+                    await post("mbp_deactivate_invoice_license_local", {});
+                }catch(e){}
+                location.reload();
+            });
+        }
+
+    })();
+    </script>';
 
         echo '</div>';
     }
@@ -863,13 +995,19 @@ JS;
         echo '</div>';
     }
 
+    public function invoice_license_is_ok()
+    {
+        return class_exists('MBP_Invoice_License') && MBP_Invoice_License::is_valid();
+    }
+    //کد فاکتور
     public function render_invoices_page()
     {
         if (!current_user_can('manage_options')) {
             wp_die('دسترسی ندارید');
         }
 
-        if (!$this->license_is_ok()) {
+        // ✅ اینجا چک لایسنس فاکتور
+        if (!MBP_License::invoice_is_valid()) {
             echo $this->render_license_required_box('admin');
             return;
         }
@@ -877,41 +1015,10 @@ JS;
         echo '<div class="wrap" style="direction:rtl;">';
         echo '<h1>مدیریت فاکتورها</h1>';
 
-        echo '
-        <div style="max-width:1200px;margin-top:20px;">
-            <div id="mbp-invoices-container">
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
-                    <div style="font-size:14px;color:#6b7280;margin-bottom:20px;">
-                        در حال بارگذاری فاکتورها...
-                    </div>
-                </div>
-            </div>
-        </div>
-        ';
-
-        // JavaScript برای بارگذاری فاکتورها
-        echo '
-        <script>
-        jQuery(function($){
-            function loadInvoices(){
-                $.post(ajaxurl, {
-                    action: "mbp_get_invoices",
-                    nonce: "' . wp_create_nonce('mbp_admin_action_nonce') . '"
-                }, function(response){
-                    if(response.success){
-                        $("#mbp-invoices-container").html(response.data.html);
-                    }
-                });
-            }
-            
-            loadInvoices();
-        });
-        </script>
-        ';
-
-        echo '</div>';
+        // ادامه کدهای خودت...
     }
-    public function admin_approve_booking()
+
+    public function admin_approve_booking(): void
     {
         if (!current_user_can('manage_options'))
             wp_send_json_error(array('message' => 'دسترسی ندارید'));
@@ -1129,64 +1236,71 @@ JS;
                 </div>
 
                 <!-- تب تنظیمات پیامک -->
-               <div class="mbp-tab-pane" id="tab-sms">
-    <div style="max-width:800px;">
-        <h3 style="margin-top:0;">مدیریت اطلاع‌رسانی و مخاطبین</h3>
+                <div class="mbp-tab-pane" id="tab-sms">
+                    <div style="max-width:800px;">
+                        <h3 style="margin-top:0;">مدیریت اطلاع‌رسانی و مخاطبین</h3>
 
-        <div style="background:rgba(255, 255, 255, .06); border:1px solid rgba(75, 75, 75, 0.8); border-radius:10px; padding:20px; margin-bottom:20px;">
-            <h4 style="margin-top:0; color:#fff;">دفترچه تلفن (مشتریان اخیر)</h4>
-            <div style="max-height: 250px; overflow-y: auto;">
-<table class="wp-list-table widefat fixed striped">
-    <thead>
-        <tr>
-            <th>نام مشتری</th>
-            <th>شماره موبایل</th>
-        </tr>
-    </thead>
-    <tbody>
-        <?php
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'mbp_phonebook';
-        
-        // چک کردن اینکه آیا جدول اصلاً وجود دارد؟
-        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
-        
-        if (!$table_exists) {
-            echo '<tr><td colspan="2" style="color:red;">خطا: جدول mbp_phonebook در دیتابیس یافت نشد!</td></tr>';
-        } else {
-            $results = $wpdb->get_results("SELECT name, phone FROM $table_name ORDER BY id DESC");
-            
-            if (!empty($results)) {
-                foreach ($results as $row): ?>
-                    <tr>
-                        <td><?php echo esc_html($row->name); ?></td>
-                        <td><?php echo esc_html($row->phone); ?></td>
-                    </tr>
-                <?php endforeach;
-            } else {
-                echo '<tr><td colspan="2" style="text-align:center;">دفترچه تلفن خالی است. (هنوز شماره‌ای ثبت نشده)</td></tr>';
-            }
-        }
-        ?>
-    </tbody>
-</table>
-            </div>
-        </div>
+                        <div
+                            style="background:rgba(255, 255, 255, .06); border:1px solid rgba(75, 75, 75, 0.8); border-radius:10px; padding:20px; margin-bottom:20px;">
+                            <h4 style="margin-top:0; color:#fff;">دفترچه تلفن (مشتریان اخیر)</h4>
+                            <div style="max-height: 250px; overflow-y: auto;">
+                                <table class="wp-list-table widefat fixed striped">
+                                    <thead>
+                                        <tr>
+                                            <th>نام مشتری</th>
+                                            <th>شماره موبایل</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php
+                                        global $wpdb;
+                                        $table_name = $wpdb->prefix . 'mbp_phonebook';
 
-        <div style="background:rgba(255, 255, 255, .06); border:1px solid rgba(75, 75, 75, 0.8); border-radius:10px; padding:20px;">
-            <h4 style="margin-top:0; color:#fff;">ارسال پیامک گروهی</h4>
-            <div style="margin-bottom:15px;">
-                <label style="display:block; margin-bottom:5px;">متن پیامک برای همه مخاطبین:</label>
-                <textarea id="mass-sms-text" rows="5" style="width:100%; background:rgba(0,0,0,0.2); color:#fff; border:1px solid #555; border-radius:5px; padding:10px;" placeholder="پیام خود را اینجا بنویسید..."></textarea>
-            </div>
-            <button type="button" id="mbp-send-mass-sms" class="button button-primary" style="background:#2271b1 !important;">
-                <span class="dashicons dashicons-paper-plane" style="vertical-align: middle;"></span>
-                ارسال به تمام شماره‌ها
-            </button>
-            <span id="mass-sms-status" style="margin-right:15px; font-size:12px;"></span>
-        </div>
-    </div>
-</div>
+                                        // چک کردن اینکه آیا جدول اصلاً وجود دارد؟
+                                        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
+
+                                        if (!$table_exists) {
+                                            echo '<tr><td colspan="2" style="color:red;">خطا: جدول mbp_phonebook در دیتابیس یافت نشد!</td></tr>';
+                                        } else {
+                                            $results = $wpdb->get_results("SELECT name, phone FROM $table_name ORDER BY id DESC");
+
+                                            if (!empty($results)) {
+                                                foreach ($results as $row): ?>
+                                                    <tr>
+                                                        <td><?php echo esc_html($row->name); ?></td>
+                                                        <td><?php echo esc_html($row->phone); ?></td>
+                                                    </tr>
+                                                <?php endforeach;
+                                            } else {
+                                                echo '<tr><td colspan="2" style="text-align:center;">دفترچه تلفن خالی است. (هنوز شماره‌ای ثبت نشده)</td></tr>';
+                                            }
+
+                                        }
+
+                                        ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div
+                            style="background:rgba(255, 255, 255, .06); border:1px solid rgba(75, 75, 75, 0.8); border-radius:10px; padding:20px;">
+                            <h4 style="margin-top:0; color:#fff;">ارسال پیامک گروهی</h4>
+                            <div style="margin-bottom:15px;">
+                                <label style="display:block; margin-bottom:5px;">متن پیامک برای همه مخاطبین:</label>
+                                <textarea id="mass-sms-text" rows="5"
+                                    style="width:100%; background:rgba(0,0,0,0.2); color:#fff; border:1px solid #555; border-radius:5px; padding:10px;"
+                                    placeholder="پیام خود را اینجا بنویسید..."></textarea>
+                            </div>
+                            <button type="button" id="mbp-send-mass-sms" class="button button-primary"
+                                style="background:#2271b1 !important;">
+                                <span class="dashicons dashicons-paper-plane" style="vertical-align: middle;"></span>
+                                ارسال به تمام شماره‌ها
+                            </button>
+                            <span id="mass-sms-status" style="margin-right:15px; font-size:12px;"></span>
+                        </div>
+                    </div>
+                </div>
                 <!-- تب تنظیمات درگاه پرداخت -->
                 <div class="mbp-tab-pane" id="tab-payment">
                     <div style="max-width:600px;">
@@ -1442,6 +1556,14 @@ JS;
             .regular-text {
                 padding: 10px;
                 width: 300px;
+                border-radius: 10px;
+                background: rgba(0, 0, 0, 0.2);
+                color: #fff;
+                border: 1px solid #555;
+            }
+
+            .regular-text:focus {
+                outline: 1px solid #0084ffff;
             }
         </style>
 
@@ -1492,37 +1614,37 @@ JS;
                 });
 
                 // ارسال پیامک گروهی
-$(document).on('click', '#mbp-send-mass-sms', function() {
-    const message = $('#mass-sms-text').val();
-    const btn = $(this);
-    const status = $('#mass-sms-status');
+                $(document).on('click', '#mbp-send-mass-sms', function () {
+                    const message = $('#mass-sms-text').val();
+                    const btn = $(this);
+                    const status = $('#mass-sms-status');
 
-    if (!message) {
-        alert('لطفاً متن پیام را وارد کنید');
-        return;
-    }
+                    if (!message) {
+                        alert('لطفاً متن پیام را وارد کنید');
+                        return;
+                    }
 
-    if (!confirm('آیا مطمئن هستید که می‌خواهید این پیام را برای تمام مخاطبین لیست ارسال کنید؟')) {
-        return;
-    }
+                    if (!confirm('آیا مطمئن هستید که می‌خواهید این پیام را برای تمام مخاطبین لیست ارسال کنید؟')) {
+                        return;
+                    }
 
-    btn.prop('disabled', true).text('در حال ارسال...');
-    
-    $.post(ajaxurl, {
-        action: 'mbp_send_mass_sms',
-        message: message,
-        nonce: nonce
-    }, function(response) {
-        if (response.success) {
-            status.text('ارسال با موفقیت انجام شد').css('color', '#10b981');
-            $('#mass-sms-text').val('');
-        } else {
-            status.text('خطا در ارسال').css('color', '#ef4444');
-        }
-    }).always(function() {
-        btn.prop('disabled', false).html('<span class="dashicons dashicons-paper-plane"></span> ارسال به تمام شماره‌ها');
-    });
-});
+                    btn.prop('disabled', true).text('در حال ارسال...');
+
+                    $.post(ajaxurl, {
+                        action: 'mbp_send_mass_sms',
+                        message: message,
+                        nonce: nonce
+                    }, function (response) {
+                        if (response.success) {
+                            status.text('ارسال با موفقیت انجام شد').css('color', '#10b981');
+                            $('#mass-sms-text').val('');
+                        } else {
+                            status.text('خطا در ارسال').css('color', '#ef4444');
+                        }
+                    }).always(function () {
+                        btn.prop('disabled', false).html('<span class="dashicons dashicons-paper-plane"></span> ارسال به تمام شماره‌ها');
+                    });
+                });
 
                 // ارسال فرم خدمت
                 $('#mbp-service-form').on('submit', function (e) {
@@ -1601,64 +1723,9 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                 });
 
                 // ذخیره تنظیمات پیامک
-                $('#mbp-sms-settings-form').on('submit', function (e) {
-                    e.preventDefault();
-
-                    const submitBtn = $('#mbp-sms-save');
-                    const originalText = submitBtn.text();
-                    const messageEl = $('#mbp-sms-message');
-
-                    submitBtn.prop('disabled', true);
-                    submitBtn.text('در حال ذخیره...');
-                    messageEl.text('').css('color', '');
-
-                    const formData = $(this).serialize() + '&action=mbp_save_sms_settings&nonce=' + nonce;
-
-                    $.post(ajaxurl, formData, function (response) {
-                        if (response.success) {
-                            messageEl.text('تنظیمات با موفقیت ذخیره شد').css('color', '#10b981');
-                        } else {
-                            messageEl.text(response.data.message || 'خطا در ذخیره').css('color', '#ef4444');
-                        }
-                    }).fail(function () {
-                        messageEl.text('خطا در ارتباط با سرور').css('color', '#ef4444');
-                    }).always(function () {
-                        submitBtn.prop('disabled', false);
-                        submitBtn.text(originalText);
-                    });
-                });
 
                 // تست پیامک
-                $('#mbp-test-sms').on('click', function () {
-                    const phone = prompt('شماره موبایل برای تست پیامک را وارد کنید:');
-                    if (!phone || !/^09[0-9]{9}$/.test(phone)) {
-                        alert('شماره موبایل معتبر وارد کنید');
-                        return;
-                    }
 
-                    const button = $(this);
-                    const originalText = button.text();
-
-                    button.prop('disabled', true);
-                    button.text('در حال ارسال...');
-
-                    $.post(ajaxurl, {
-                        action: 'mbp_test_sms',
-                        phone: phone,
-                        nonce: nonce
-                    }, function (response) {
-                        if (response.success) {
-                            alert('پیامک تست با موفقیت ارسال شد');
-                        } else {
-                            alert(response.data.message || 'خطا در ارسال پیامک');
-                        }
-                    }).fail(function () {
-                        alert('خطا در ارتباط با سرور');
-                    }).always(function () {
-                        button.prop('disabled', false);
-                        button.text(originalText);
-                    });
-                });
 
                 // ذخیره تنظیمات درگاه پرداخت
                 $('#mbp-payment-settings-form').on('submit', function (e) {
@@ -1724,34 +1791,35 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
     }
     // در متد enqueue_admin_assets استایل اضافه کنید:
 
-    public function ajax_send_mass_sms() {
-    check_ajax_referer('mbp_admin_action_nonce', 'nonce');
-    
-    if (!current_user_can('manage_options')) {
-        wp_send_json_error(array('message' => 'عدم دسترسی'));
+    public function ajax_send_mass_sms()
+    {
+        check_ajax_referer('mbp_admin_action_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => 'عدم دسترسی'));
+        }
+
+        $message = sanitize_textarea_field($_POST['message']);
+
+        global $wpdb;
+        // استخراج شماره‌های منحصر به فرد از جدول رزروها
+        $phones = $wpdb->get_col("SELECT DISTINCT customer_phone FROM {$wpdb->prefix}mbp_bookings");
+
+        if (empty($phones)) {
+            wp_send_json_error(array('message' => 'شماره‌ای برای ارسال یافت نشد'));
+        }
+
+        // استفاده از کلاس SMS Manager که در پروژه داری برای ارسال
+        $sms_manager = new MBP_SMS_Manager(); // یا هر متدی که برای ارسال داری
+
+        foreach ($phones as $phone) {
+            // اینجا متد ارسال پیامک خودت را صدا بزن
+            // $sms_manager->send_direct_sms($phone, $message);
+        }
+
+        wp_send_json_success();
     }
-
-    $message = sanitize_textarea_field($_POST['message']);
-    
-    global $wpdb;
-    // استخراج شماره‌های منحصر به فرد از جدول رزروها
-    $phones = $wpdb->get_col("SELECT DISTINCT customer_phone FROM {$wpdb->prefix}mbp_bookings");
-
-    if (empty($phones)) {
-        wp_send_json_error(array('message' => 'شماره‌ای برای ارسال یافت نشد'));
-    }
-
-    // استفاده از کلاس SMS Manager که در پروژه داری برای ارسال
-    $sms_manager = new MBP_SMS_Manager(); // یا هر متدی که برای ارسال داری
-    
-    foreach ($phones as $phone) {
-        // اینجا متد ارسال پیامک خودت را صدا بزن
-        // $sms_manager->send_direct_sms($phone, $message);
-    }
-
-    wp_send_json_success();
-}
-// حتما این اکشن را در Constructor کلاس ثبت کن:
+    // حتما این اکشن را در Constructor کلاس ثبت کن:
 // add_action('wp_ajax_mbp_send_mass_sms', array($this, 'ajax_send_mass_sms'));
 
     public function ajax_save_service()
@@ -3297,102 +3365,73 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
     // =========================
     public function handle_booking_submit()
     {
-        if (!$this->license_is_ok()) wp_send_json_error(array('message' => 'افزونه فعال نیست.'));
-         check_ajax_referer('mbp_booking_submit_action', 'mbp_booking_nonce_field');
+        global $wpdb;
 
-    $name  = sanitize_text_field($_POST['customer_name']);
-    $email = sanitize_email($_POST['customer_email']);
-    $phone = sanitize_text_field($_POST['customer_phone']);
-    $service_id = intval($_POST['service_id']);
-    $date  = sanitize_text_field($_POST['date']);
-    $slot  = sanitize_text_field($_POST['slot']);
+        // ۱. امنیت و لایسنس
+        if (!$this->license_is_ok())
+            wp_send_json_error(array('message' => 'افزونه فعال نیست.'));
+        check_ajax_referer('mbp_booking_submit_action', 'mbp_booking_nonce_field');
 
-        // اعتبارسنجی
-        if ($name === '' || $email === '' || !is_email($email) || $date === '' || $slot === '' || $service_id === 0) {
+        // ۲. دریافت و ضدعفونی داده‌ها
+        $name = sanitize_text_field($_POST['customer_name']);
+        $email = sanitize_email($_POST['customer_email']);
+        $phone = sanitize_text_field($_POST['customer_phone']);
+        $service_id = intval($_POST['service_id']);
+        $date = sanitize_text_field($_POST['date']);
+        $slot = sanitize_text_field($_POST['slot']);
+
+        // ۳. اعتبارسنجی فیلدها
+        if (empty($name) || empty($phone) || empty($date) || empty($slot) || $service_id === 0) {
             wp_send_json_error(array('message' => 'اطلاعات فرم ناقص است.'));
         }
-
         if (!preg_match('/^09[0-9]{9}$/', $phone)) {
             wp_send_json_error(array('message' => 'شماره موبایل معتبر نیست.'));
         }
 
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-            wp_send_json_error(array('message' => 'تاریخ نامعتبر است.'));
-        }
+        // ۴. بررسی تکراری نبودن زمان رزرو
+        $dt = date('Y-m-d H:i:s', strtotime($date . ' ' . $slot));
+        $table_app = $wpdb->prefix . 'mbp_appointments';
+        $exists = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_app WHERE time = %s AND status != 'cancelled'", $dt));
+        if ($exists > 0)
+            wp_send_json_error(array('message' => 'این زمان قبلاً رزرو شده است.'));
 
-        if (!preg_match('/^\d{2}:\d{2}$/', $slot)) {
-            wp_send_json_error(array('message' => 'ساعت نامعتبر است.'));
-        }
-
-        $allowed = $this->get_time_slots();
-        if (!in_array($slot, $allowed, true)) {
-            wp_send_json_error(array('message' => 'این ساعت در لیست ساعت‌های مجاز نیست.'));
-        }
-
-        // بررسی تکراری نبودن
-        $dt = $date . ' ' . $slot . ':00';
-        $dt = date('Y-m-d H:i:s', strtotime($dt));
-
-        global $wpdb;
-        $table = $wpdb->prefix . 'mbp_appointments';
-
-        $exists = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$table} WHERE time = %s AND status IN ('pending','approved')",
-                $dt
-            )
-        );
-
-        if ($exists > 0) {
-            wp_send_json_error(array('message' => 'این زمان قبلاً رزرو شده است. لطفاً یک ساعت دیگر انتخاب کنید.'));
-        }
-
-        // دریافت اطلاعات خدمت
+        // ۵. دریافت اطلاعات خدمت
         $service = $this->get_service($service_id);
-        if (!$service) {
+        if (!$service)
             wp_send_json_error(array('message' => 'خدمت انتخاب شده موجود نیست.'));
-        }
 
-        // تولید کد رهگیری
-        $tracking_code = substr(md5(uniqid() . time()), 0, 8) . str_pad($service_id, 3, '0', STR_PAD_LEFT);
-
-        // ذخیره رزرو
+        $tracking_code = substr(md5(uniqid()), 0, 8);
         $payment_status = ($service->price > 0) ? 'unpaid' : 'paid';
 
-        check_ajax_referer('mbp_booking_submit_action', 'mbp_booking_nonce_field');
+        // ۶. ذخیره در جدول اصلی رزروها
+        $ok = $wpdb->insert($table_app, array(
+            'time' => $dt,
+            'service_id' => $service_id,
+            'customer_name' => $name,
+            'customer_email' => $email,
+            'customer_phone' => $phone,
+            'status' => 'pending',
+            'payment_status' => $payment_status,
+            'tracking_code' => $tracking_code,
+            'created_at' => current_time('mysql')
+        ));
 
-    global $wpdb;
-    $table_app = $wpdb->prefix . 'mbp_appointments';
+        if (!$ok)
+            wp_send_json_error(array('message' => 'خطا در ثبت رزرو در دیتابیس.'));
+        $appointment_id = $wpdb->insert_id;
 
-    // ۱. بررسی تکراری نبودن زمان رزرو
-    $dt = date('Y-m-d H:i:s', strtotime($date . ' ' . $slot));
-    $exists = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_app WHERE time = %s AND status != 'cancelled'", $dt));
-    if ($exists > 0) wp_send_json_error(array('message' => 'این زمان قبلاً رزرو شده است.'));
+        // ۷. ذخیره در دفترچه تلفن (مهم: قبل از هرگونه ارسال Success)
+        $table_pb = $wpdb->prefix . 'mbp_phonebook';
+        $wpdb->query($wpdb->prepare(
+            "INSERT INTO $table_pb (name, phone) VALUES (%s, %s) 
+         ON DUPLICATE KEY UPDATE name = VALUES(name)",
+            $name,
+            $phone
+        ));
 
-    $service = $this->get_service($service_id);
-    $tracking_code = substr(md5(uniqid()), 0, 8);
-    $payment_status = ($service->price > 0) ? 'unpaid' : 'paid';
-
-    // ۲. ذخیره در جدول اصلی رزروها (Appointments)
-    $ok = $wpdb->insert($table_app, array(
-        'time' => $dt,
-        'service_id' => $service_id,
-        'customer_name' => $name,
-        'customer_email' => $email,
-        'customer_phone' => $phone,
-        'status' => 'pending',
-        'payment_status' => $payment_status,
-        'tracking_code' => $tracking_code,
-    ));
-
-    if (!$ok) wp_send_json_error(array('message' => 'خطا در ثبت رزرو.'));
-    $appointment_id = $wpdb->insert_id;
-
-
-
-        // ارسال پیامک تأیید
+        // ۸. ارسال پیامک تأیید به مشتری و ادمین
+        $sms = new MBP_SMS_Manager();
         if ($phone) {
-            $sms = new MBP_SMS_Manager();
             $sms->send_booking_confirmation($phone, array(
                 'name' => $name,
                 'date' => $this->fa_date_from_timestamp(strtotime($date), 'Y/m/d', true),
@@ -3401,51 +3440,41 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                 'tracking_code' => $tracking_code
             ));
         }
+        // اطلاع به ادمین (اگر متدش را ساخته‌اید)
+        // $sms->send_admin_notification($name, $service->name, "$date $slot");
 
-        // اگر خدمت پولی است، درخواست پرداخت
+        // ۹. مدیریت پرداخت (اگر نیاز بود)
         if ($service->price > 0) {
             $default_gateway = get_option('mbp_default_gateway', 'zarinpal');
             $payment = new MBP_Payment_Gateway($default_gateway);
-
             $callback_url = home_url('/payment-verify/');
-            $description = "پرداخت خدمت {$service->name} - کد رزرو: {$appointment_id}";
 
             $payment_result = $payment->request_payment(
                 $appointment_id,
                 $service->price,
-                $description,
+                "رزرو {$service->name} - کد: {$tracking_code}",
                 $callback_url,
-                array(
-                    'email' => $email,
-                    'phone' => $phone,
-                    'name' => $name
-                )
+                array('email' => $email, 'phone' => $phone, 'name' => $name)
             );
 
             if ($payment_result && $payment_result['success']) {
                 wp_send_json_success(array(
-                    'message' => 'رزرو با موفقیت ثبت شد. لطفاً پرداخت را انجام دهید.',
+                    'message' => 'رزرو ثبت شد. در حال انتقال به درگاه پرداخت...',
                     'needs_payment' => true,
-                    'payment_url' => $payment_result['payment_url']
+                    'payment_url' => $payment_result['payment_url'],
+                    'tracking_code' => $tracking_code
                 ));
+                return; // خروج بعد از موفقیت
             }
-
-            $table_pb = $wpdb->prefix . 'mbp_phonebook';
-    $wpdb->query($wpdb->prepare(
-        "INSERT INTO $table_pb (name, phone) VALUES (%s, %s) 
-         ON DUPLICATE KEY UPDATE name = VALUES(name)", 
-        $name, $phone
-    ));
         }
 
+        // ۱۰. خروجی نهایی برای خدمات رایگان یا اگر پرداخت به هر دلیلی مستقیم نشد
         wp_send_json_success(array(
-        'message' => 'رزرو با موفقیت انجام شد.',
-        'tracking_code' => $tracking_code,
-        'needs_payment' => ($service->price > 0),
-        'payment_url' => '' // در صورت وجود درگاه مقداردهی شود
-    ));
+            'message' => 'رزرو با موفقیت انجام شد.',
+            'tracking_code' => $tracking_code,
+            'needs_payment' => false
+        ));
     }
-
     // =========================
     // CRON JOBS
     // =========================
@@ -3722,7 +3751,8 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                                 <th>
                                     <div class="mbp-day">
                                         <div class="mbp-day-name">
-                                            <?php echo esc_html($this->fa_weekday_from_timestamp($d->getTimestamp())); ?></div>
+                                            <?php echo esc_html($this->fa_weekday_from_timestamp($d->getTimestamp())); ?>
+                                        </div>
                                         <div class="mbp-day-date">
                                             <?php echo esc_html($this->fa_date_from_timestamp($d->getTimestamp(), 'Y/m/d', true)); ?>
                                         </div>
@@ -3803,6 +3833,9 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
     // =========================
     // DASHBOARD PAGE
     // =========================
+
+
+
     public function render_dashboard_app_page()
     {
         if (!current_user_can('manage_options'))
@@ -3845,6 +3878,17 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
          FROM {$wpdb->prefix}mbp_payments p 
          WHERE p.status = 'completed'"
         ) ?: 0;
+
+        $invoice_enabled = $this->invoice_license_is_ok();
+
+        $invoice_class = 'item' . ($invoice_enabled ? '' : ' disabled');
+        $invoice_attr = $invoice_enabled ? 'data-view="invoices"' : '';
+        $invoice_title = $invoice_enabled ? '' : 'برای فعال‌سازی فاکتور باید لایسنس فاکتور تهیه کنید';
+        $invoice_lock = $invoice_enabled ? '' : ' 🔒';
+
+
+
+
 
         ?>
         <!doctype html>
@@ -3889,6 +3933,13 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                     position: relative;
                 }
 
+                .mbp-side .item.disabled {
+                    opacity: .45;
+                    pointer-events: none;
+                    filter: grayscale(1);
+                }
+
+
                 .mbp-topbar {
                     height: 54px;
                     display: flex;
@@ -3904,6 +3955,82 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                     padding: 14px;
                     overflow: auto;
                 }
+
+                /* Invoice Highlights */
+                .mbp-hl-title {
+                    margin: 0 0 12px 0;
+                    font-size: 18px;
+                    font-weight: 900;
+                }
+
+                .mbp-hl-sub {
+                    opacity: .8;
+                    margin-bottom: 16px;
+                    line-height: 1.8;
+                    font-size: 13px;
+                }
+
+                .mbp-highlights {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                    gap: 14px;
+                }
+
+                .mbp-highlight {
+                    background: rgba(255, 255, 255, .06);
+                    border: 1px solid rgba(255, 255, 255, .12);
+                    border-radius: 14px;
+                    padding: 16px;
+                    transition: .2s;
+                }
+
+                .mbp-highlight:hover {
+                    transform: translateY(-3px);
+                    background: rgba(255, 255, 255, .08);
+                }
+
+                .mbp-highlight-top {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    margin-bottom: 10px;
+                }
+
+                .mbp-highlight-icon {
+                    width: 38px;
+                    height: 38px;
+                    border-radius: 12px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: rgba(59, 130, 246, .22);
+                    border: 1px solid rgba(59, 130, 246, .25);
+                    font-size: 18px;
+                }
+
+                .mbp-highlight-badge {
+                    font-size: 11px;
+                    font-weight: 900;
+                    padding: 3px 10px;
+                    border-radius: 999px;
+                    background: rgba(34, 197, 94, .14);
+                    border: 1px solid rgba(34, 197, 94, .25);
+                    color: #a7f3d0;
+                }
+
+                .mbp-highlight-text {
+                    font-weight: 900;
+                    font-size: 14px;
+                    line-height: 1.7;
+                }
+
+                .mbp-highlight-desc {
+                    opacity: .78;
+                    font-size: 12px;
+                    line-height: 1.8;
+                    margin-top: 6px;
+                }
+
 
                 .btn {
                     background: #fff;
@@ -4575,9 +4702,12 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                     <a class="item" href="#" data-view="services">
                         ⚙️ خدمات و تنظیمات
                     </a>
-                    <a class="item" href="#" data-view="invoices">
-                        🧾 فاکتورها
+                    <a class="item <?php echo $invoice_enabled ? '' : 'disabled'; ?>" href="#" <?php echo $invoice_enabled ? 'data-view="invoices"' : ''; ?>
+                        title="<?php echo $invoice_enabled ? '' : 'برای فعال‌سازی فاکتور باید لایسنس فاکتور وارد شود'; ?>">
+                        🧾 فاکتورها <?php echo $invoice_enabled ? '' : '🔒'; ?>
                     </a>
+
+
                 </aside>
 
                 <main class="mbp-main">
@@ -4608,7 +4738,8 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                             <div class="stat-card income">
                                 <div class="label">درآمد کل</div>
                                 <div class="num" id="mbp-income">
-                                    <?php echo esc_html($this->fa_digits(number_format($total_income))); ?> تومان</div>
+                                    <?php echo esc_html($this->fa_digits(number_format($total_income))); ?> تومان
+                                </div>
                             </div>
 
                             <div class="stat-card pending">
@@ -4693,22 +4824,80 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
 
             <!-- Templates -->
             <div id="tpl-invoices" style="display:none">
-                <h2 style="margin-top:0;margin-bottom:20px;">🧾 مدیریت فاکتورها</h2>
-                <div id="mbp-invoices-container">
-                    <div
-                        style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:30px;">
-                        <div style="text-align:center;color:#cbd5e1;">
-                            <div style="margin-bottom:15px;">
-                                <div class="mbp-loading" style="width:40px;height:40px;margin:0 auto 15px;"></div>
-                                <div>در حال بارگذاری فاکتورها...</div>
+                <div style="max-width:1100px;">
+                    <h2 class="mbp-hl-title">🧾 ویژگی‌های کلیدی فاکتور</h2>
+                    <div class="mbp-hl-sub">
+                        این بخش فعلاً به صورت معرفی امکانات نمایش داده می‌شود (Highlights).<br>
+                        بعداً اگر خواستی، همین‌جا فاکتور ساز و لیست فاکتور هم اضافه می‌کنیم.
+                    </div>
+
+                    <div class="mbp-highlights">
+
+                        <div class="mbp-highlight">
+                            <div class="mbp-highlight-top">
+                                <div class="mbp-highlight-icon">⚙️</div>
+                                <div class="mbp-highlight-badge">highlights</div>
                             </div>
-                            <div style="font-size:12px;opacity:.7;">
-                                اگر بارگذاری طول کشید، صفحه را رفرش کنید
-                            </div>
+                            <div class="mbp-highlight-text">امکان سفارشی‌سازی فاکتور</div>
+                            <div class="mbp-highlight-desc">قالب، رنگ، لوگو، متن‌ها و آیتم‌ها قابل شخصی‌سازی هستند.</div>
                         </div>
+
+                        <div class="mbp-highlight">
+                            <div class="mbp-highlight-top">
+                                <div class="mbp-highlight-icon">📅</div>
+                                <div class="mbp-highlight-badge">highlights</div>
+                            </div>
+                            <div class="mbp-highlight-text">پشتیبانی از تاریخ شمسی و میلادی</div>
+                            <div class="mbp-highlight-desc">نمایش تاریخ فاکتور با هر دو فرمت برای راحتی مشتری و مدیر.</div>
+                        </div>
+
+                        <div class="mbp-highlight">
+                            <div class="mbp-highlight-top">
+                                <div class="mbp-highlight-icon">🖨️</div>
+                                <div class="mbp-highlight-badge">highlights</div>
+                            </div>
+                            <div class="mbp-highlight-text">امکان چاپ و ذخیره به PDF</div>
+                            <div class="mbp-highlight-desc">چاپ مستقیم از پنل و خروجی PDF برای ارسال یا آرشیو.</div>
+                        </div>
+
+                        <div class="mbp-highlight">
+                            <div class="mbp-highlight-top">
+                                <div class="mbp-highlight-icon">📩</div>
+                                <div class="mbp-highlight-badge">highlights</div>
+                            </div>
+                            <div class="mbp-highlight-text">ارسال پیامک وضعیت سفارش</div>
+                            <div class="mbp-highlight-desc">ارسال خودکار یا دستی پیامک وضعیت و لینک فاکتور به مشتری.</div>
+                        </div>
+
+                        <div class="mbp-highlight">
+                            <div class="mbp-highlight-top">
+                                <div class="mbp-highlight-icon">🔳</div>
+                                <div class="mbp-highlight-badge">highlights</div>
+                            </div>
+                            <div class="mbp-highlight-text">پشتیبانی از بارکد و QR Code</div>
+                            <div class="mbp-highlight-desc">برای اعتبارسنجی سریع فاکتور یا هدایت به صفحه پرداخت/جزئیات.</div>
+                        </div>
+
                     </div>
                 </div>
             </div>
+
+
+            <!-- Invoice List -->
+            <div
+                style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;">
+                <div style="font-weight:900;margin-bottom:10px;">لیست فاکتورها</div>
+                <div id="mbp-invoices-list">
+                    <div style="text-align:center;color:#cbd5e1;padding:30px;">
+                        <div class="mbp-loading" style="width:40px;height:40px;margin:0 auto 15px;"></div>
+                        <div>در حال بارگذاری...</div>
+                    </div>
+                </div>
+            </div>
+
+            </div>
+            </div>
+
 
             <script>
                 (function () {
@@ -4792,304 +4981,303 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                                     }, 100);
                                 } else if (name === 'invoices') {
                                     mount('tpl-invoices');
-                                    setTimeout(() => {
-                                        loadInvoices();
-                                    }, 100);
-                                } else {
-                                    view.innerHTML = `<h2 style="margin-top:0">${name}</h2><div style="opacity:.85;padding:20px;text-align:center;">بزودی...</div>`;
-                                }
-                            }
-
-                            // مدیریت کلیک روی تب‌ها
-                            items.forEach(a => {
-                                a.addEventListener('click', (e) => {
-                                    e.preventDefault();
-                                    setActive(a);
-                                    localStorage.setItem('mbp_active_view', a.dataset.view);
-                                    render(a.dataset.view);
-                                });
-                            });
-
-                            // تابع‌های کمکی برای آپدیت UI
-                            function updateTotal(delta) {
-                                const el = document.querySelector('#mbp-view #mbp-total') || document.getElementById('mbp-total');
-                                if (!el) return;
-
-                                const fa_digits = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
-                                const en_digits = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-
-                                let current_fa = el.textContent || '0';
-                                let current_en = current_fa.replace(/[۰-۹]/g, d => en_digits[fa_digits.indexOf(d)]);
-
-                                const n = parseInt(current_en, 10) || 0;
-                                const next_n = Math.max(0, n + delta);
-
-                                let next_fa = String(next_n).replace(/[0-9]/g, d => fa_digits[parseInt(d, 10)]);
-                                el.textContent = next_fa;
-                            }
-
-                            // ==================== Event Listeners برای رزروها ====================
-
-                            // تایید رزرو
-                            document.addEventListener('click', function (e) {
-                                if (e.target.classList.contains('mbp-approve') || e.target.closest('.mbp-approve')) {
-                                    e.preventDefault();
-                                    const btn = e.target.classList.contains('mbp-approve') ? e.target : e.target.closest('.mbp-approve');
-                                    const appointmentId = btn.dataset.id;
-                                    approveBooking(appointmentId, btn);
                                 }
 
-                                // لغو رزرو
-                                if (e.target.classList.contains('mbp-cancel') || e.target.closest('.mbp-cancel')) {
-                                    e.preventDefault();
-                                    const btn = e.target.classList.contains('mbp-cancel') ? e.target : e.target.closest('.mbp-cancel');
-                                    const appointmentId = btn.dataset.id;
-                                    cancelBooking(appointmentId, btn);
-                                }
-
-                                // حذف رزرو
-                                if (e.target.classList.contains('mbp-delete') || e.target.closest('.mbp-delete')) {
-                                    e.preventDefault();
-                                    const btn = e.target.classList.contains('mbp-delete') ? e.target : e.target.closest('.mbp-delete');
-                                    const appointmentId = btn.dataset.id;
-                                    deleteBooking(appointmentId, btn);
-                                }
-
-                                // ناوبری هفتگی
-                                if (e.target.classList.contains('mbp-nav') || e.target.closest('.mbp-nav')) {
-                                    e.preventDefault();
-                                    const btn = e.target.classList.contains('mbp-nav') ? e.target : e.target.closest('.mbp-nav');
-                                    const days = parseInt(btn.dataset.weekNav);
-                                    navigateWeek(days);
-                                }
-                            });
-
-                            // تابعهای مدیریت رزرو
-                            async function approveBooking(appointmentId, button) {
-                                if (!appointmentId) return;
-
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_admin_approve_booking');
-                                    formData.append('id', appointmentId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ رزرو تایید شد');
-
-                                        // آپدیت UI
-                                        const card = button.closest('.mbp-booking-card');
-                                        if (card) {
-                                            const statusEl = card.querySelector('.mbp-status-pending');
-                                            if (statusEl) {
-                                                statusEl.className = 'mbp-status-approved';
-                                                statusEl.textContent = 'Approved';
-                                            }
-                                            button.remove(); // حذف دکمه تایید
-                                        }
-
-                                        updateTotal(0); // رفرش آمار
-                                    } else {
-                                        toast(data.data?.message || 'خطا در تایید رزرو', 'error');
-                                        button.innerHTML = originalText;
-                                        button.disabled = false;
-                                    }
-                                } catch (error) {
-                                    console.error('Approve booking error:', error);
-                                    toast('خطای شبکه در تایید رزرو', 'error');
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            async function cancelBooking(appointmentId, button) {
-                                if (!appointmentId || !confirm('آیا از لغو این رزرو مطمئن هستید؟')) return;
-
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_admin_cancel_booking');
-                                    formData.append('id', appointmentId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('⚠️ رزرو لغو شد');
-
-                                        const card = button.closest('.mbp-booking-card');
-                                        if (card) {
-                                            card.style.opacity = '0.5';
-                                            card.style.filter = 'grayscale(1)';
-                                        }
-                                    } else {
-                                        toast(data.data?.message || 'خطا در لغو رزرو', 'error');
-                                        button.innerHTML = originalText;
-                                        button.disabled = false;
-                                    }
-                                } catch (error) {
-                                    console.error('Cancel booking error:', error);
-                                    toast('خطای شبکه در لغو رزرو', 'error');
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            async function deleteBooking(appointmentId, button) {
-                                if (!appointmentId || !confirm('⚠️ آیا از حذف این رزرو مطمئن هستید؟ این عمل قابل بازگشت نیست.')) return;
-
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_admin_delete_booking');
-                                    formData.append('id', appointmentId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('🗑️ رزرو حذف شد');
-
-                                        const card = button.closest('.mbp-booking-card');
-                                        if (card) {
-                                            card.style.animation = 'fadeOut 0.3s ease';
-                                            setTimeout(() => card.remove(), 300);
-                                        }
-
-                                        updateTotal(-1);
-                                    } else {
-                                        toast(data.data?.message || 'خطا در حذف رزرو', 'error');
-                                        button.innerHTML = originalText;
-                                        button.disabled = false;
-                                    }
-                                } catch (error) {
-                                    console.error('Delete booking error:', error);
-                                    toast('خطای شبکه در حذف رزرو', 'error');
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            async function navigateWeek(days) {
-                                const scheduleWrap = document.querySelector('.mbp-schedule-wrap');
-                                if (!scheduleWrap) return;
-
-                                const currentWeekStart = scheduleWrap.dataset.weekStart;
-                                const currentDate = new Date(currentWeekStart);
-                                currentDate.setDate(currentDate.getDate() + days);
-
-                                const newWeekStart = currentDate.toISOString().split('T')[0];
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_get_schedule_week');
-                                    formData.append('week_start', newWeekStart);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success && data.data.html) {
-                                        document.getElementById('mbp-schedule-root').innerHTML = data.data.html;
-                                    }
-                                } catch (error) {
-                                    console.error('Navigate week error:', error);
-                                    toast('خطا در بارگذاری هفته', 'error');
-                                }
-                            }
-
-                            // بارگذاری اولیه
-                            const initialView = localStorage.getItem('mbp_active_view') || 'dashboard';
-                            const initialItem = document.querySelector(`a.item[data-view="${initialView}"]`) || document.querySelector('a.item.active');
-
-                            if (initialItem) {
-                                setActive(initialItem);
-                                render(initialItem.dataset.view);
                             } else {
-                                render('dashboard');
+                                view.innerHTML = `<h2 style="margin-top:0">${name}</h2><div style="opacity:.85;padding:20px;text-align:center;">بزودی...</div>`;
+                            }
+                        }
+
+                                    // مدیریت کلیک روی تب‌ها
+                                    items.forEach(a => {
+                            a.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                setActive(a);
+                                localStorage.setItem('mbp_active_view', a.dataset.view);
+                                render(a.dataset.view);
+                            });
+                        });
+
+                        // تابع‌های کمکی برای آپدیت UI
+                        function updateTotal(delta) {
+                            const el = document.querySelector('#mbp-view #mbp-total') || document.getElementById('mbp-total');
+                            if (!el) return;
+
+                            const fa_digits = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+                            const en_digits = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+                            let current_fa = el.textContent || '0';
+                            let current_en = current_fa.replace(/[۰-۹]/g, d => en_digits[fa_digits.indexOf(d)]);
+
+                            const n = parseInt(current_en, 10) || 0;
+                            const next_n = Math.max(0, n + delta);
+
+                            let next_fa = String(next_n).replace(/[0-9]/g, d => fa_digits[parseInt(d, 10)]);
+                            el.textContent = next_fa;
+                        }
+
+                        // ==================== Event Listeners برای رزروها ====================
+
+                        // تایید رزرو
+                        document.addEventListener('click', function (e) {
+                            if (e.target.classList.contains('mbp-approve') || e.target.closest('.mbp-approve')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-approve') ? e.target : e.target.closest('.mbp-approve');
+                                const appointmentId = btn.dataset.id;
+                                approveBooking(appointmentId, btn);
                             }
 
-                            // ==================== تابع‌های AJAX ====================
+                            // لغو رزرو
+                            if (e.target.classList.contains('mbp-cancel') || e.target.closest('.mbp-cancel')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-cancel') ? e.target : e.target.closest('.mbp-cancel');
+                                const appointmentId = btn.dataset.id;
+                                cancelBooking(appointmentId, btn);
+                            }
 
-                            async function loadServices() {
-                                console.log('🔄 Loading services...');
-                                const container = document.querySelector('#mbp-view #mbp-services-container');
-                                if (!container) {
-                                    console.error('❌ Services container not found');
-                                    return;
+                            // حذف رزرو
+                            if (e.target.classList.contains('mbp-delete') || e.target.closest('.mbp-delete')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-delete') ? e.target : e.target.closest('.mbp-delete');
+                                const appointmentId = btn.dataset.id;
+                                deleteBooking(appointmentId, btn);
+                            }
+
+                            // ناوبری هفتگی
+                            if (e.target.classList.contains('mbp-nav') || e.target.closest('.mbp-nav')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-nav') ? e.target : e.target.closest('.mbp-nav');
+                                const days = parseInt(btn.dataset.weekNav);
+                                navigateWeek(days);
+                            }
+                        });
+
+                        // تابعهای مدیریت رزرو
+                        async function approveBooking(appointmentId, button) {
+                            if (!appointmentId) return;
+
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_approve_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ رزرو تایید شد');
+
+                                    // آپدیت UI
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        const statusEl = card.querySelector('.mbp-status-pending');
+                                        if (statusEl) {
+                                            statusEl.className = 'mbp-status-approved';
+                                            statusEl.textContent = 'Approved';
+                                        }
+                                        button.remove(); // حذف دکمه تایید
+                                    }
+
+                                    updateTotal(0); // رفرش آمار
+                                } else {
+                                    toast(data.data?.message || 'خطا در تایید رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
                                 }
+                            } catch (error) {
+                                console.error('Approve booking error:', error);
+                                toast('خطای شبکه در تایید رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
 
-                                container.innerHTML = `
+                        async function cancelBooking(appointmentId, button) {
+                            if (!appointmentId || !confirm('آیا از لغو این رزرو مطمئن هستید؟')) return;
+
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_cancel_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('⚠️ رزرو لغو شد');
+
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        card.style.opacity = '0.5';
+                                        card.style.filter = 'grayscale(1)';
+                                    }
+                                } else {
+                                    toast(data.data?.message || 'خطا در لغو رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }
+                            } catch (error) {
+                                console.error('Cancel booking error:', error);
+                                toast('خطای شبکه در لغو رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        async function deleteBooking(appointmentId, button) {
+                            if (!appointmentId || !confirm('⚠️ آیا از حذف این رزرو مطمئن هستید؟ این عمل قابل بازگشت نیست.')) return;
+
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_delete_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('🗑️ رزرو حذف شد');
+
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        card.style.animation = 'fadeOut 0.3s ease';
+                                        setTimeout(() => card.remove(), 300);
+                                    }
+
+                                    updateTotal(-1);
+                                } else {
+                                    toast(data.data?.message || 'خطا در حذف رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }
+                            } catch (error) {
+                                console.error('Delete booking error:', error);
+                                toast('خطای شبکه در حذف رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        async function navigateWeek(days) {
+                            const scheduleWrap = document.querySelector('.mbp-schedule-wrap');
+                            if (!scheduleWrap) return;
+
+                            const currentWeekStart = scheduleWrap.dataset.weekStart;
+                            const currentDate = new Date(currentWeekStart);
+                            currentDate.setDate(currentDate.getDate() + days);
+
+                            const newWeekStart = currentDate.toISOString().split('T')[0];
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_get_schedule_week');
+                                formData.append('week_start', newWeekStart);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success && data.data.html) {
+                                    document.getElementById('mbp-schedule-root').innerHTML = data.data.html;
+                                }
+                            } catch (error) {
+                                console.error('Navigate week error:', error);
+                                toast('خطا در بارگذاری هفته', 'error');
+                            }
+                        }
+
+                        // بارگذاری اولیه
+                        const initialView = localStorage.getItem('mbp_active_view') || 'dashboard';
+                        const initialItem = document.querySelector(`a.item[data-view="${initialView}"]`) || document.querySelector('a.item.active');
+
+                        if (initialItem) {
+                            setActive(initialItem);
+                            render(initialItem.dataset.view);
+                        } else {
+                            render('dashboard');
+                        }
+
+                        // ==================== تابع‌های AJAX ====================
+
+                        async function loadServices() {
+                            console.log('🔄 Loading services...');
+                            const container = document.querySelector('#mbp-view #mbp-services-container');
+                            if (!container) {
+                                console.error('❌ Services container not found');
+                                return;
+                            }
+
+                            container.innerHTML = `
                                 <div style="text-align:center;color:#cbd5e1;padding:40px;">
                                     <div class="mbp-loading" style="width:40px;height:40px;margin:0 auto 15px;"></div>
                                     <div>در حال بارگذاری خدمات و تنظیمات...</div>
                                 </div>
                             `;
 
-                                try {
-                                    const fd = new FormData();
-                                    fd.append('action', 'mbp_get_services');
-                                    fd.append('nonce', window.MBP_ADMIN_NONCE);
+                            try {
+                                const fd = new FormData();
+                                fd.append('action', 'mbp_get_services');
+                                fd.append('nonce', window.MBP_ADMIN_NONCE);
 
-                                    console.log('📤 Sending AJAX request...');
+                                console.log('📤 Sending AJAX request...');
 
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: fd
-                                    });
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: fd
+                                });
 
-                                    console.log('📥 Response status:', response.status, response.statusText);
+                                console.log('📥 Response status:', response.status, response.statusText);
 
-                                    if (!response.ok) {
-                                        throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
-                                    }
+                                if (!response.ok) {
+                                    throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+                                }
 
-                                    const data = await response.json();
-                                    console.log('📊 Response data:', data);
+                                const data = await response.json();
+                                console.log('📊 Response data:', data);
 
-                                    if (data.success && data.data && data.data.html) {
-                                        console.log('✅ Services loaded successfully');
-                                        container.innerHTML = data.data.html;
+                                if (data.success && data.data && data.data.html) {
+                                    console.log('✅ Services loaded successfully');
+                                    container.innerHTML = data.data.html;
 
-                                        // فعال‌سازی event listenerها بعد از لود HTML
-                                        setTimeout(initServicesEvents, 50);
+                                    // فعال‌سازی event listenerها بعد از لود HTML
+                                    setTimeout(initServicesEvents, 50);
 
-                                    } else {
-                                        const errorMsg = data.data?.message || 'خطای نامشخص';
-                                        console.error('❌ Service load error:', errorMsg);
+                                } else {
+                                    const errorMsg = data.data?.message || 'خطای نامشخص';
+                                    console.error('❌ Service load error:', errorMsg);
 
-                                        container.innerHTML = `
+                                    container.innerHTML = `
                                         <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:12px;padding:30px;color:#ef4444;text-align:center;">
                                             <div style="font-size:18px;font-weight:900;margin-bottom:10px;">⚠️ خطا</div>
                                             <div style="margin-bottom:20px;">${errorMsg}</div>
@@ -5098,12 +5286,12 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                                             </button>
                                         </div>
                                     `;
-                                    }
+                                }
 
-                                } catch (error) {
-                                    console.error('❌ Network error:', error);
+                            } catch (error) {
+                                console.error('❌ Network error:', error);
 
-                                    container.innerHTML = `
+                                container.innerHTML = `
                                     <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:12px;padding:30px;color:#ef4444;text-align:center;">
                                         <div style="font-size:18px;font-weight:900;margin-bottom:10px;">🌐 خطای شبکه</div>
                                         <div style="margin-bottom:20px;font-size:14px;">${error.message}</div>
@@ -5117,122 +5305,122 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                                         </div>
                                     </div>
                                 `;
-                                }
                             }
+                        }
 
-                            function initServicesEvents() {
-                                console.log('🔧 Initializing services events...');
+                        function initServicesEvents() {
+                            console.log('🔧 Initializing services events...');
 
-                                // ========== مدیریت تب‌های داخلی ==========
-                                const tabButtons = document.querySelectorAll('.mbp-settings-tab');
-                                tabButtons.forEach(tab => {
-                                    tab.addEventListener('click', function (e) {
-                                        e.preventDefault();
-                                        const tabName = this.dataset.tab;
-                                        console.log('📌 Inner tab clicked:', tabName);
+                            // ========== مدیریت تب‌های داخلی ==========
+                            const tabButtons = document.querySelectorAll('.mbp-settings-tab');
+                            tabButtons.forEach(tab => {
+                                tab.addEventListener('click', function (e) {
+                                    e.preventDefault();
+                                    const tabName = this.dataset.tab;
+                                    console.log('📌 Inner tab clicked:', tabName);
 
-                                        // حذف active از همه
-                                        tabButtons.forEach(t => t.classList.remove('active'));
-                                        // اضافه کردن active به تب کلیک شده
-                                        this.classList.add('active');
+                                    // حذف active از همه
+                                    tabButtons.forEach(t => t.classList.remove('active'));
+                                    // اضافه کردن active به تب کلیک شده
+                                    this.classList.add('active');
 
-                                        // مخفی کردن همه paneها
-                                        document.querySelectorAll('.mbp-tab-pane').forEach(pane => {
-                                            pane.classList.remove('active');
-                                        });
-
-                                        // نمایش pane مربوطه
-                                        const pane = document.getElementById('tab-' + tabName);
-                                        if (pane) {
-                                            pane.classList.add('active');
-                                        }
+                                    // مخفی کردن همه paneها
+                                    document.querySelectorAll('.mbp-tab-pane').forEach(pane => {
+                                        pane.classList.remove('active');
                                     });
-                                });
 
-                                // ========== مدیریت فرم خدمات ==========
-                                const serviceForm = document.getElementById('mbp-service-form');
-                                if (serviceForm) {
-                                    serviceForm.addEventListener('submit', function (e) {
-                                        e.preventDefault();
-                                        saveService(this);
-                                    });
-                                }
-
-                                // ========== دکمه افزودن خدمت ==========
-                                const addServiceBtn = document.getElementById('mbp-add-service');
-                                if (addServiceBtn) {
-                                    addServiceBtn.addEventListener('click', function () {
-                                        openServiceModal();
-                                    });
-                                }
-
-                                // ========== دکمه‌های ویرایش ==========
-                                document.addEventListener('click', function (e) {
-                                    // ویرایش خدمت
-                                    if (e.target.classList.contains('mbp-edit-service') || e.target.closest('.mbp-edit-service')) {
-                                        e.preventDefault();
-                                        const btn = e.target.classList.contains('mbp-edit-service') ? e.target : e.target.closest('.mbp-edit-service');
-                                        const serviceId = btn.dataset.id;
-                                        editService(serviceId);
-                                    }
-
-                                    // فعال/غیرفعال کردن خدمت
-                                    if (e.target.classList.contains('mbp-toggle-service') || e.target.closest('.mbp-toggle-service')) {
-                                        e.preventDefault();
-                                        const btn = e.target.classList.contains('mbp-toggle-service') ? e.target : e.target.closest('.mbp-toggle-service');
-                                        const serviceId = btn.dataset.id;
-                                        toggleService(serviceId, btn);
-                                    }
-
-                                    // حذف خدمت
-                                    if (e.target.classList.contains('mbp-delete-service') || e.target.closest('.mbp-delete-service')) {
-                                        e.preventDefault();
-                                        const btn = e.target.classList.contains('mbp-delete-service') ? e.target : e.target.closest('.mbp-delete-service');
-                                        const serviceId = btn.dataset.id;
-                                        deleteService(serviceId, btn);
+                                    // نمایش pane مربوطه
+                                    const pane = document.getElementById('tab-' + tabName);
+                                    if (pane) {
+                                        pane.classList.add('active');
                                     }
                                 });
+                            });
 
-                                // ========== فرم تنظیمات پیامک ==========
-                                const smsForm = document.getElementById('mbp-sms-settings-form');
-                                if (smsForm) {
-                                    smsForm.addEventListener('submit', function (e) {
-                                        e.preventDefault();
-                                        saveSMSSettings(this);
-                                    });
-                                }
-
-                                // ========== فرم تنظیمات درگاه ==========
-                                const paymentForm = document.getElementById('mbp-payment-settings-form');
-                                if (paymentForm) {
-                                    paymentForm.addEventListener('submit', function (e) {
-                                        e.preventDefault();
-                                        savePaymentSettings(this);
-                                    });
-                                }
-
-                                // ========== فرم تنظیمات عمومی ==========
-                                const generalForm = document.getElementById('mbp-general-settings-form');
-                                if (generalForm) {
-                                    generalForm.addEventListener('submit', function (e) {
-                                        e.preventDefault();
-                                        saveGeneralSettings(this);
-                                    });
-                                }
-
-                                // ========== تست پیامک ==========
-                                const testSmsBtn = document.getElementById('mbp-test-sms');
-                                if (testSmsBtn) {
-                                    testSmsBtn.addEventListener('click', testSMS);
-                                }
-
-                                console.log('✅ Services events initialized');
+                            // ========== مدیریت فرم خدمات ==========
+                            const serviceForm = document.getElementById('mbp-service-form');
+                            if (serviceForm) {
+                                serviceForm.addEventListener('submit', function (e) {
+                                    e.preventDefault();
+                                    saveService(this);
+                                });
                             }
 
-                            // ==================== تابع‌های کمکی خدمات ====================
+                            // ========== دکمه افزودن خدمت ==========
+                            const addServiceBtn = document.getElementById('mbp-add-service');
+                            if (addServiceBtn) {
+                                addServiceBtn.addEventListener('click', function () {
+                                    openServiceModal();
+                                });
+                            }
 
-                            function openServiceModal(serviceData = null) {
-                                const modalHTML = `
+                            // ========== دکمه‌های ویرایش ==========
+                            document.addEventListener('click', function (e) {
+                                // ویرایش خدمت
+                                if (e.target.classList.contains('mbp-edit-service') || e.target.closest('.mbp-edit-service')) {
+                                    e.preventDefault();
+                                    const btn = e.target.classList.contains('mbp-edit-service') ? e.target : e.target.closest('.mbp-edit-service');
+                                    const serviceId = btn.dataset.id;
+                                    editService(serviceId);
+                                }
+
+                                // فعال/غیرفعال کردن خدمت
+                                if (e.target.classList.contains('mbp-toggle-service') || e.target.closest('.mbp-toggle-service')) {
+                                    e.preventDefault();
+                                    const btn = e.target.classList.contains('mbp-toggle-service') ? e.target : e.target.closest('.mbp-toggle-service');
+                                    const serviceId = btn.dataset.id;
+                                    toggleService(serviceId, btn);
+                                }
+
+                                // حذف خدمت
+                                if (e.target.classList.contains('mbp-delete-service') || e.target.closest('.mbp-delete-service')) {
+                                    e.preventDefault();
+                                    const btn = e.target.classList.contains('mbp-delete-service') ? e.target : e.target.closest('.mbp-delete-service');
+                                    const serviceId = btn.dataset.id;
+                                    deleteService(serviceId, btn);
+                                }
+                            });
+
+                            // ========== فرم تنظیمات پیامک ==========
+                            const smsForm = document.getElementById('mbp-sms-settings-form');
+                            if (smsForm) {
+                                smsForm.addEventListener('submit', function (e) {
+                                    e.preventDefault();
+                                    saveSMSSettings(this);
+                                });
+                            }
+
+                            // ========== فرم تنظیمات درگاه ==========
+                            const paymentForm = document.getElementById('mbp-payment-settings-form');
+                            if (paymentForm) {
+                                paymentForm.addEventListener('submit', function (e) {
+                                    e.preventDefault();
+                                    savePaymentSettings(this);
+                                });
+                            }
+
+                            // ========== فرم تنظیمات عمومی ==========
+                            const generalForm = document.getElementById('mbp-general-settings-form');
+                            if (generalForm) {
+                                generalForm.addEventListener('submit', function (e) {
+                                    e.preventDefault();
+                                    saveGeneralSettings(this);
+                                });
+                            }
+
+                            // ========== تست پیامک ==========
+                            const testSmsBtn = document.getElementById('mbp-test-sms');
+                            if (testSmsBtn) {
+                                testSmsBtn.addEventListener('click', testSMS);
+                            }
+
+                            console.log('✅ Services events initialized');
+                        }
+
+                        // ==================== تابع‌های کمکی خدمات ====================
+
+                        function openServiceModal(serviceData = null) {
+                            const modalHTML = `
                                 <div class="mbp-modal-overlay" id="mbp-service-modal">
                                     <div class="mbp-modal">
                                         <div class="mbp-modal-header">
@@ -5268,388 +5456,388 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                                 </div>
                             `;
 
-                                document.body.insertAdjacentHTML('beforeend', modalHTML);
+                            document.body.insertAdjacentHTML('beforeend', modalHTML);
 
-                                // اضافه کردن event listener به فرم
-                                const form = document.getElementById('mbp-service-modal-form');
-                                form.addEventListener('submit', function (e) {
-                                    e.preventDefault();
-                                    saveServiceFromModal(this);
-                                });
-                            }
-
-                            function closeServiceModal() {
-                                const modal = document.getElementById('mbp-service-modal');
-                                if (modal) {
-                                    modal.style.animation = 'fadeOut 0.2s ease';
-                                    setTimeout(() => modal.remove(), 200);
-                                }
-                            }
-
-                            async function saveServiceFromModal(form) {
-                                const submitBtn = form.querySelector('button[type="submit"]');
-                                const originalText = submitBtn.innerHTML;
-                                submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
-                                submitBtn.disabled = true;
-
-                                try {
-                                    const formData = new FormData(form);
-                                    formData.append('action', 'mbp_save_service');
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ خدمت با موفقیت ذخیره شد');
-                                        closeServiceModal();
-                                        // رفرش لیست خدمات
-                                        setTimeout(loadServices, 500);
-                                    } else {
-                                        toast(data.data?.message || 'خطا در ذخیره خدمت', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در ذخیره خدمت', 'error');
-                                    console.error('Save service error:', error);
-                                } finally {
-                                    submitBtn.innerHTML = originalText;
-                                    submitBtn.disabled = false;
-                                }
-                            }
-
-                            function editService(serviceId) {
-                                const row = document.querySelector(`tr[data-service-id="${serviceId}"]`);
-                                if (!row) return;
-
-                                const serviceData = {
-                                    id: serviceId,
-                                    name: row.querySelector('td:nth-child(2) strong')?.textContent || '',
-                                    description: row.querySelector('td:nth-child(3)')?.textContent || '',
-                                    duration: parseInt(row.querySelector('td:nth-child(4)')?.textContent || 30),
-                                    price: parseInt((row.querySelector('td:nth-child(5)')?.textContent || '0').replace(/,/g, ''))
-                                };
-
-                                openServiceModal(serviceData);
-                            }
-
-                            async function toggleService(serviceId, button) {
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_toggle_service');
-                                    formData.append('id', serviceId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        const newStatus = data.data.new_status;
-                                        button.dataset.status = newStatus;
-                                        button.textContent = newStatus ? 'غیرفعال' : 'فعال';
-
-                                        const statusSpan = button.closest('tr').querySelector('.service-status');
-                                        statusSpan.classList.remove('active', 'inactive');
-                                        statusSpan.classList.add(newStatus ? 'active' : 'inactive');
-                                        statusSpan.textContent = newStatus ? 'فعال' : 'غیرفعال';
-
-                                        toast(newStatus ? '✅ خدمت فعال شد' : '⚠️ خدمت غیرفعال شد');
-                                    } else {
-                                        toast(data.data?.message || 'خطا در تغییر وضعیت', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در تغییر وضعیت', 'error');
-                                    console.error('Toggle service error:', error);
-                                } finally {
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            async function deleteService(serviceId, button) {
-                                if (!confirm('⚠️ آیا از حذف این خدمت مطمئن هستید؟ این عمل قابل بازگشت نیست.')) {
-                                    return;
-                                }
-
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_delete_service');
-                                    formData.append('id', serviceId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('🗑️ خدمت با موفقیت حذف شد');
-                                        button.closest('tr').style.opacity = '0.5';
-                                        setTimeout(() => {
-                                            button.closest('tr').remove();
-                                        }, 300);
-                                    } else {
-                                        toast(data.data?.message || 'خطا در حذف خدمت', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در حذف خدمت', 'error');
-                                    console.error('Delete service error:', error);
-                                } finally {
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            // ==================== تابع‌های تنظیمات ====================
-
-                            async function saveSMSSettings(form) {
-                                const submitBtn = form.querySelector('#mbp-sms-save');
-                                const originalText = submitBtn.innerHTML;
-                                submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
-                                submitBtn.disabled = true;
-
-                                try {
-                                    const formData = new FormData(form);
-                                    formData.append('action', 'mbp_save_sms_settings');
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ تنظیمات پیامک ذخیره شد');
-                                    } else {
-                                        toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در ذخیره تنظیمات', 'error');
-                                    console.error('Save SMS settings error:', error);
-                                } finally {
-                                    submitBtn.innerHTML = originalText;
-                                    submitBtn.disabled = false;
-                                }
-                            }
-
-                            async function savePaymentSettings(form) {
-                                const submitBtn = form.querySelector('#mbp-payment-save');
-                                const originalText = submitBtn.innerHTML;
-                                submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
-                                submitBtn.disabled = true;
-
-                                try {
-                                    const formData = new FormData(form);
-                                    formData.append('action', 'mbp_save_payment_settings');
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ تنظیمات درگاه پرداخت ذخیره شد');
-                                    } else {
-                                        toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در ذخیره تنظیمات', 'error');
-                                    console.error('Save payment settings error:', error);
-                                } finally {
-                                    submitBtn.innerHTML = originalText;
-                                    submitBtn.disabled = false;
-                                }
-                            }
-
-                            async function saveGeneralSettings(form) {
-                                const submitBtn = form.querySelector('#mbp-general-save');
-                                const originalText = submitBtn.innerHTML;
-                                submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
-                                submitBtn.disabled = true;
-
-                                try {
-                                    const formData = new FormData(form);
-                                    formData.append('action', 'mbp_save_general_settings');
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ تنظیمات عمومی ذخیره شد');
-                                    } else {
-                                        toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در ذخیره تنظیمات', 'error');
-                                    console.error('Save general settings error:', error);
-                                } finally {
-                                    submitBtn.innerHTML = originalText;
-                                    submitBtn.disabled = false;
-                                }
-                            }
-
-                            async function testSMS() {
-                                const phone = prompt('شماره موبایل برای تست پیامک را وارد کنید:');
-                                if (!phone || !/^09[0-9]{9}$/.test(phone)) {
-                                    alert('⚠️ شماره موبایل معتبر وارد کنید (مثال: 09123456789)');
-                                    return;
-                                }
-
-                                const button = document.getElementById('mbp-test-sms');
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span> در حال ارسال...';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_test_sms');
-                                    formData.append('phone', phone);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        alert('✅ پیامک تست با موفقیت ارسال شد');
-                                    } else {
-                                        alert('❌ ' + (data.data?.message || 'خطا در ارسال پیامک'));
-                                    }
-                                } catch (error) {
-                                    alert('❌ خطای شبکه در ارسال پیامک');
-                                    console.error('Test SMS error:', error);
-                                } finally {
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            // ==================== تابع time slots ====================
-
-                            async function initSlots() {
-                                const ta = document.querySelector('#mbp-view #mbp-slots-text');
-                                const btnSave = document.querySelector('#mbp-view #mbp-slots-save');
-                                const btnLoad = document.querySelector('#mbp-view #mbp-slots-load');
-                                if (!ta || !btnSave || !btnLoad) return;
-
-                                async function load() {
-                                    const fd = new FormData();
-                                    fd.append('action', 'mbp_get_time_slots');
-                                    fd.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    btnSave.disabled = true;
-                                    btnLoad.disabled = true;
-
-                                    try {
-                                        const res = await fetch(window.MBP_AJAX_URL, {
-                                            method: "POST",
-                                            body: fd
-                                        });
-
-                                        if (!res.ok) {
-                                            throw new Error(`HTTP error! status: ${res.status}`);
-                                        }
-
-                                        const data = await res.json();
-
-                                        if (!data.success) {
-                                            toast(data?.data?.message || 'خطا در دریافت اطلاعات', 'error');
-                                            return;
-                                        }
-
-                                        if (data.data && data.data.slots) {
-                                            ta.value = data.data.slots.join("\n");
-                                        } else {
-                                            ta.value = "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00";
-                                        }
-                                    } catch (err) {
-                                        console.error('Error loading slots:', err);
-                                        toast('خطای شبکه در بارگذاری اسلات‌ها', 'error');
-                                        ta.value = "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00";
-                                    } finally {
-                                        btnSave.disabled = false;
-                                        btnLoad.disabled = false;
-                                    }
-                                }
-
-                                btnLoad.onclick = (e) => {
-                                    e.preventDefault();
-                                    load();
-                                };
-
-                                btnSave.onclick = async (e) => {
-                                    e.preventDefault();
-                                    btnSave.disabled = true;
-                                    const fd = new FormData();
-                                    fd.append('action', 'mbp_save_time_slots');
-                                    fd.append('nonce', window.MBP_ADMIN_NONCE);
-                                    fd.append('slots_text', ta.value || '');
-
-                                    try {
-                                        const res = await fetch(window.MBP_AJAX_URL, {
-                                            method: "POST",
-                                            body: fd
-                                        });
-
-                                        if (!res.ok) {
-                                            throw new Error(`HTTP error! status: ${res.status}`);
-                                        }
-
-                                        const data = await res.json();
-
-                                        if (!data.success) {
-                                            toast(data?.data?.message || 'خطا در ذخیره', 'error');
-                                            return;
-                                        }
-
-                                        toast('✅ ذخیره شد');
-                                        load(); // بارگذاری مجدد
-                                    } catch (err) {
-                                        console.error('Error saving slots:', err);
-                                        toast('خطای شبکه در ذخیره اسلات‌ها', 'error');
-                                    } finally {
-                                        btnSave.disabled = false;
-                                    }
-                                };
-
-                                load(); // بارگذاری اولیه
-                            }
-
-                        } catch (err) {
-                            hardFail('اسکریپت پنل کرش کرد. Console را هم چک کن.', err);
+                            // اضافه کردن event listener به فرم
+                            const form = document.getElementById('mbp-service-modal-form');
+                            form.addEventListener('submit', function (e) {
+                                e.preventDefault();
+                                saveServiceFromModal(this);
+                            });
                         }
-                    });
-                })();
+
+                        function closeServiceModal() {
+                            const modal = document.getElementById('mbp-service-modal');
+                            if (modal) {
+                                modal.style.animation = 'fadeOut 0.2s ease';
+                                setTimeout(() => modal.remove(), 200);
+                            }
+                        }
+
+                        async function saveServiceFromModal(form) {
+                            const submitBtn = form.querySelector('button[type="submit"]');
+                            const originalText = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
+                            submitBtn.disabled = true;
+
+                            try {
+                                const formData = new FormData(form);
+                                formData.append('action', 'mbp_save_service');
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ خدمت با موفقیت ذخیره شد');
+                                    closeServiceModal();
+                                    // رفرش لیست خدمات
+                                    setTimeout(loadServices, 500);
+                                } else {
+                                    toast(data.data?.message || 'خطا در ذخیره خدمت', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در ذخیره خدمت', 'error');
+                                console.error('Save service error:', error);
+                            } finally {
+                                submitBtn.innerHTML = originalText;
+                                submitBtn.disabled = false;
+                            }
+                        }
+
+                        function editService(serviceId) {
+                            const row = document.querySelector(`tr[data-service-id="${serviceId}"]`);
+                            if (!row) return;
+
+                            const serviceData = {
+                                id: serviceId,
+                                name: row.querySelector('td:nth-child(2) strong')?.textContent || '',
+                                description: row.querySelector('td:nth-child(3)')?.textContent || '',
+                                duration: parseInt(row.querySelector('td:nth-child(4)')?.textContent || 30),
+                                price: parseInt((row.querySelector('td:nth-child(5)')?.textContent || '0').replace(/,/g, ''))
+                            };
+
+                            openServiceModal(serviceData);
+                        }
+
+                        async function toggleService(serviceId, button) {
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_toggle_service');
+                                formData.append('id', serviceId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    const newStatus = data.data.new_status;
+                                    button.dataset.status = newStatus;
+                                    button.textContent = newStatus ? 'غیرفعال' : 'فعال';
+
+                                    const statusSpan = button.closest('tr').querySelector('.service-status');
+                                    statusSpan.classList.remove('active', 'inactive');
+                                    statusSpan.classList.add(newStatus ? 'active' : 'inactive');
+                                    statusSpan.textContent = newStatus ? 'فعال' : 'غیرفعال';
+
+                                    toast(newStatus ? '✅ خدمت فعال شد' : '⚠️ خدمت غیرفعال شد');
+                                } else {
+                                    toast(data.data?.message || 'خطا در تغییر وضعیت', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در تغییر وضعیت', 'error');
+                                console.error('Toggle service error:', error);
+                            } finally {
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        async function deleteService(serviceId, button) {
+                            if (!confirm('⚠️ آیا از حذف این خدمت مطمئن هستید؟ این عمل قابل بازگشت نیست.')) {
+                                return;
+                            }
+
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_delete_service');
+                                formData.append('id', serviceId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('🗑️ خدمت با موفقیت حذف شد');
+                                    button.closest('tr').style.opacity = '0.5';
+                                    setTimeout(() => {
+                                        button.closest('tr').remove();
+                                    }, 300);
+                                } else {
+                                    toast(data.data?.message || 'خطا در حذف خدمت', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در حذف خدمت', 'error');
+                                console.error('Delete service error:', error);
+                            } finally {
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        // ==================== تابع‌های تنظیمات ====================
+
+                        async function saveSMSSettings(form) {
+                            const submitBtn = form.querySelector('#mbp-sms-save');
+                            const originalText = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
+                            submitBtn.disabled = true;
+
+                            try {
+                                const formData = new FormData(form);
+                                formData.append('action', 'mbp_save_sms_settings');
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ تنظیمات پیامک ذخیره شد');
+                                } else {
+                                    toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در ذخیره تنظیمات', 'error');
+                                console.error('Save SMS settings error:', error);
+                            } finally {
+                                submitBtn.innerHTML = originalText;
+                                submitBtn.disabled = false;
+                            }
+                        }
+
+                        async function savePaymentSettings(form) {
+                            const submitBtn = form.querySelector('#mbp-payment-save');
+                            const originalText = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
+                            submitBtn.disabled = true;
+
+                            try {
+                                const formData = new FormData(form);
+                                formData.append('action', 'mbp_save_payment_settings');
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ تنظیمات درگاه پرداخت ذخیره شد');
+                                } else {
+                                    toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در ذخیره تنظیمات', 'error');
+                                console.error('Save payment settings error:', error);
+                            } finally {
+                                submitBtn.innerHTML = originalText;
+                                submitBtn.disabled = false;
+                            }
+                        }
+
+                        async function saveGeneralSettings(form) {
+                            const submitBtn = form.querySelector('#mbp-general-save');
+                            const originalText = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
+                            submitBtn.disabled = true;
+
+                            try {
+                                const formData = new FormData(form);
+                                formData.append('action', 'mbp_save_general_settings');
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ تنظیمات عمومی ذخیره شد');
+                                } else {
+                                    toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در ذخیره تنظیمات', 'error');
+                                console.error('Save general settings error:', error);
+                            } finally {
+                                submitBtn.innerHTML = originalText;
+                                submitBtn.disabled = false;
+                            }
+                        }
+
+                        async function testSMS() {
+                            const phone = prompt('شماره موبایل برای تست پیامک را وارد کنید:');
+                            if (!phone || !/^09[0-9]{9}$/.test(phone)) {
+                                alert('⚠️ شماره موبایل معتبر وارد کنید (مثال: 09123456789)');
+                                return;
+                            }
+
+                            const button = document.getElementById('mbp-test-sms');
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span> در حال ارسال...';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_test_sms');
+                                formData.append('phone', phone);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    alert('✅ پیامک تست با موفقیت ارسال شد');
+                                } else {
+                                    alert('❌ ' + (data.data?.message || 'خطا در ارسال پیامک'));
+                                }
+                            } catch (error) {
+                                alert('❌ خطای شبکه در ارسال پیامک');
+                                console.error('Test SMS error:', error);
+                            } finally {
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        // ==================== تابع time slots ====================
+
+                        async function initSlots() {
+                            const ta = document.querySelector('#mbp-view #mbp-slots-text');
+                            const btnSave = document.querySelector('#mbp-view #mbp-slots-save');
+                            const btnLoad = document.querySelector('#mbp-view #mbp-slots-load');
+                            if (!ta || !btnSave || !btnLoad) return;
+
+                            async function load() {
+                                const fd = new FormData();
+                                fd.append('action', 'mbp_get_time_slots');
+                                fd.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                btnSave.disabled = true;
+                                btnLoad.disabled = true;
+
+                                try {
+                                    const res = await fetch(window.MBP_AJAX_URL, {
+                                        method: "POST",
+                                        body: fd
+                                    });
+
+                                    if (!res.ok) {
+                                        throw new Error(`HTTP error! status: ${res.status}`);
+                                    }
+
+                                    const data = await res.json();
+
+                                    if (!data.success) {
+                                        toast(data?.data?.message || 'خطا در دریافت اطلاعات', 'error');
+                                        return;
+                                    }
+
+                                    if (data.data && data.data.slots) {
+                                        ta.value = data.data.slots.join("\n");
+                                    } else {
+                                        ta.value = "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00";
+                                    }
+                                } catch (err) {
+                                    console.error('Error loading slots:', err);
+                                    toast('خطای شبکه در بارگذاری اسلات‌ها', 'error');
+                                    ta.value = "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00";
+                                } finally {
+                                    btnSave.disabled = false;
+                                    btnLoad.disabled = false;
+                                }
+                            }
+
+                            btnLoad.onclick = (e) => {
+                                e.preventDefault();
+                                load();
+                            };
+
+                            btnSave.onclick = async (e) => {
+                                e.preventDefault();
+                                btnSave.disabled = true;
+                                const fd = new FormData();
+                                fd.append('action', 'mbp_save_time_slots');
+                                fd.append('nonce', window.MBP_ADMIN_NONCE);
+                                fd.append('slots_text', ta.value || '');
+
+                                try {
+                                    const res = await fetch(window.MBP_AJAX_URL, {
+                                        method: "POST",
+                                        body: fd
+                                    });
+
+                                    if (!res.ok) {
+                                        throw new Error(`HTTP error! status: ${res.status}`);
+                                    }
+
+                                    const data = await res.json();
+
+                                    if (!data.success) {
+                                        toast(data?.data?.message || 'خطا در ذخیره', 'error');
+                                        return;
+                                    }
+
+                                    toast('✅ ذخیره شد');
+                                    load(); // بارگذاری مجدد
+                                } catch (err) {
+                                    console.error('Error saving slots:', err);
+                                    toast('خطای شبکه در ذخیره اسلات‌ها', 'error');
+                                } finally {
+                                    btnSave.disabled = false;
+                                }
+                            };
+
+                            load(); // بارگذاری اولیه
+                        }
+
+                    } catch (err) {
+                        hardFail('اسکریپت پنل کرش کرد. Console را هم چک کن.', err);
+                    }
+                });
+                        }) ();
             </script>
 
         </body>
@@ -5798,7 +5986,8 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
                                 <th>
                                     <div class="mbp-public-day">
                                         <div class="mbp-public-day-name">
-                                            <?php echo esc_html($this->fa_weekday_from_timestamp($d->getTimestamp())); ?></div>
+                                            <?php echo esc_html($this->fa_weekday_from_timestamp($d->getTimestamp())); ?>
+                                        </div>
                                         <div class="mbp-public-day-date">
                                             <?php echo esc_html($this->fa_date_from_timestamp($d->getTimestamp(), 'Y/m/d', true)); ?>
                                         </div>
@@ -6006,7 +6195,7 @@ $(document).on('click', '#mbp-send-mass-sms', function() {
     }
     .mbp-tab-btn.active {
         background: #fff;
-        color: #2271b1;
+        color: #2271b1;إ
         position: relative;
         top: 2px;
         margin-bottom: -2px;

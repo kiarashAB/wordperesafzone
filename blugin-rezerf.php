@@ -33,6 +33,10 @@ require_once MBP_PLUGIN_DIR . 'includes/class-mbp-core.php';
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-sms-manager.php';
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-payment-gateway.php';
 require_once MBP_PLUGIN_DIR . 'elementor/elementor-init.php';
+require_once MBP_PLUGIN_DIR . 'includes/class-mbp-invoice.php';
+require_once MBP_PLUGIN_DIR . 'includes/class-mbp-invoice-license.php';
+
+
 
 // فعال‌سازی: ساخت جدول‌ها
 function mbp_activate_plugin() {
@@ -75,6 +79,22 @@ function mbp_create_pages() {
         }
     }
 }
+
+register_activation_hook(__FILE__, function () {
+    if (class_exists('MBP_Invoices')) {
+        MBP_Invoices::install();
+    } else {
+        require_once plugin_dir_path(__FILE__) . 'includes/class-mbp-invoices.php';
+        MBP_Invoices::install();
+    }
+});
+
+
+function mbp_run_plugin() {
+    $plugin = new MBP_Core();
+    $plugin->run();
+}
+add_action('plugins_loaded', 'mbp_run_plugin');
 
 // اجرای افزونه (مهم: بعد از آماده شدن وردپرس)
 add_action('init', function () {
