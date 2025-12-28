@@ -4976,6 +4976,7 @@ JS;
                                     setTimeout(initSlots, 100);
                                 } else if (name === 'invoices') {
                                     mount('tpl-invoices');
+<<<<<<< HEAD
                                 } else {
                                     view.innerHTML = `
             <h2 style="margin-top:0">${name}</h2>
@@ -5022,259 +5023,305 @@ JS;
                                     const btn = e.target.classList.contains('mbp-approve') ? e.target : e.target.closest('.mbp-approve');
                                     const appointmentId = btn.dataset.id;
                                     approveBooking(appointmentId, btn);
+=======
+>>>>>>> c51bac2853469f50ae82ec36865c4b496ee87875
                                 }
 
-                                // لغو رزرو
-                                if (e.target.classList.contains('mbp-cancel') || e.target.closest('.mbp-cancel')) {
-                                    e.preventDefault();
-                                    const btn = e.target.classList.contains('mbp-cancel') ? e.target : e.target.closest('.mbp-cancel');
-                                    const appointmentId = btn.dataset.id;
-                                    cancelBooking(appointmentId, btn);
-                                }
-
-                                // حذف رزرو
-                                if (e.target.classList.contains('mbp-delete') || e.target.closest('.mbp-delete')) {
-                                    e.preventDefault();
-                                    const btn = e.target.classList.contains('mbp-delete') ? e.target : e.target.closest('.mbp-delete');
-                                    const appointmentId = btn.dataset.id;
-                                    deleteBooking(appointmentId, btn);
-                                }
-
-                                // ناوبری هفتگی
-                                if (e.target.classList.contains('mbp-nav') || e.target.closest('.mbp-nav')) {
-                                    e.preventDefault();
-                                    const btn = e.target.classList.contains('mbp-nav') ? e.target : e.target.closest('.mbp-nav');
-                                    const days = parseInt(btn.dataset.weekNav);
-                                    navigateWeek(days);
-                                }
-                            });
-
-                            // تابعهای مدیریت رزرو
-                            async function approveBooking(appointmentId, button) {
-                                if (!appointmentId) return;
-
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_admin_approve_booking');
-                                    formData.append('id', appointmentId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ رزرو تایید شد');
-
-                                        // آپدیت UI
-                                        const card = button.closest('.mbp-booking-card');
-                                        if (card) {
-                                            const statusEl = card.querySelector('.mbp-status-pending');
-                                            if (statusEl) {
-                                                statusEl.className = 'mbp-status-approved';
-                                                statusEl.textContent = 'Approved';
-                                            }
-                                            button.remove(); // حذف دکمه تایید
-                                        }
-
-                                        updateTotal(0); // رفرش آمار
-                                    } else {
-                                        toast(data.data?.message || 'خطا در تایید رزرو', 'error');
-                                        button.innerHTML = originalText;
-                                        button.disabled = false;
-                                    }
-                                } catch (error) {
-                                    console.error('Approve booking error:', error);
-                                    toast('خطای شبکه در تایید رزرو', 'error');
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            async function cancelBooking(appointmentId, button) {
-                                if (!appointmentId || !confirm('آیا از لغو این رزرو مطمئن هستید؟')) return;
-
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_admin_cancel_booking');
-                                    formData.append('id', appointmentId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('⚠️ رزرو لغو شد');
-
-                                        const card = button.closest('.mbp-booking-card');
-                                        if (card) {
-                                            card.style.opacity = '0.5';
-                                            card.style.filter = 'grayscale(1)';
-                                        }
-                                    } else {
-                                        toast(data.data?.message || 'خطا در لغو رزرو', 'error');
-                                        button.innerHTML = originalText;
-                                        button.disabled = false;
-                                    }
-                                } catch (error) {
-                                    console.error('Cancel booking error:', error);
-                                    toast('خطای شبکه در لغو رزرو', 'error');
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            async function deleteBooking(appointmentId, button) {
-                                if (!appointmentId || !confirm('⚠️ آیا از حذف این رزرو مطمئن هستید؟ این عمل قابل بازگشت نیست.')) return;
-
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_admin_delete_booking');
-                                    formData.append('id', appointmentId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('🗑️ رزرو حذف شد');
-
-                                        const card = button.closest('.mbp-booking-card');
-                                        if (card) {
-                                            card.style.animation = 'fadeOut 0.3s ease';
-                                            setTimeout(() => card.remove(), 300);
-                                        }
-
-                                        updateTotal(-1);
-                                    } else {
-                                        toast(data.data?.message || 'خطا در حذف رزرو', 'error');
-                                        button.innerHTML = originalText;
-                                        button.disabled = false;
-                                    }
-                                } catch (error) {
-                                    console.error('Delete booking error:', error);
-                                    toast('خطای شبکه در حذف رزرو', 'error');
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            async function navigateWeek(days) {
-                                const scheduleWrap = document.querySelector('.mbp-schedule-wrap');
-                                if (!scheduleWrap) return;
-
-                                const currentWeekStart = scheduleWrap.dataset.weekStart;
-                                const currentDate = new Date(currentWeekStart);
-                                currentDate.setDate(currentDate.getDate() + days);
-
-                                const newWeekStart = currentDate.toISOString().split('T')[0];
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_get_schedule_week');
-                                    formData.append('week_start', newWeekStart);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success && data.data.html) {
-                                        document.getElementById('mbp-schedule-root').innerHTML = data.data.html;
-                                    }
-                                } catch (error) {
-                                    console.error('Navigate week error:', error);
-                                    toast('خطا در بارگذاری هفته', 'error');
-                                }
-                            }
-
-                            // بارگذاری اولیه
-                            const initialView = localStorage.getItem('mbp_active_view') || 'dashboard';
-                            const initialItem = document.querySelector(`a.item[data-view="${initialView}"]`) || document.querySelector('a.item.active');
-
-                            if (initialItem) {
-                                setActive(initialItem);
-                                render(initialItem.dataset.view);
                             } else {
-                                render('dashboard');
+                                view.innerHTML = `<h2 style="margin-top:0">${name}</h2><div style="opacity:.85;padding:20px;text-align:center;">بزودی...</div>`;
+                            }
+                        }
+
+                                    // مدیریت کلیک روی تب‌ها
+                                    items.forEach(a => {
+                            a.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                setActive(a);
+                                localStorage.setItem('mbp_active_view', a.dataset.view);
+                                render(a.dataset.view);
+                            });
+                        });
+
+                        // تابع‌های کمکی برای آپدیت UI
+                        function updateTotal(delta) {
+                            const el = document.querySelector('#mbp-view #mbp-total') || document.getElementById('mbp-total');
+                            if (!el) return;
+
+                            const fa_digits = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+                            const en_digits = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+                            let current_fa = el.textContent || '0';
+                            let current_en = current_fa.replace(/[۰-۹]/g, d => en_digits[fa_digits.indexOf(d)]);
+
+                            const n = parseInt(current_en, 10) || 0;
+                            const next_n = Math.max(0, n + delta);
+
+                            let next_fa = String(next_n).replace(/[0-9]/g, d => fa_digits[parseInt(d, 10)]);
+                            el.textContent = next_fa;
+                        }
+
+                        // ==================== Event Listeners برای رزروها ====================
+
+                        // تایید رزرو
+                        document.addEventListener('click', function (e) {
+                            if (e.target.classList.contains('mbp-approve') || e.target.closest('.mbp-approve')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-approve') ? e.target : e.target.closest('.mbp-approve');
+                                const appointmentId = btn.dataset.id;
+                                approveBooking(appointmentId, btn);
                             }
 
-                            // ==================== تابع‌های AJAX ====================
+                            // لغو رزرو
+                            if (e.target.classList.contains('mbp-cancel') || e.target.closest('.mbp-cancel')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-cancel') ? e.target : e.target.closest('.mbp-cancel');
+                                const appointmentId = btn.dataset.id;
+                                cancelBooking(appointmentId, btn);
+                            }
 
-                            async function loadServices() {
-                                console.log('🔄 Loading services...');
-                                const container = document.querySelector('#mbp-view #mbp-services-container');
-                                if (!container) {
-                                    console.error('❌ Services container not found');
-                                    return;
+                            // حذف رزرو
+                            if (e.target.classList.contains('mbp-delete') || e.target.closest('.mbp-delete')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-delete') ? e.target : e.target.closest('.mbp-delete');
+                                const appointmentId = btn.dataset.id;
+                                deleteBooking(appointmentId, btn);
+                            }
+
+                            // ناوبری هفتگی
+                            if (e.target.classList.contains('mbp-nav') || e.target.closest('.mbp-nav')) {
+                                e.preventDefault();
+                                const btn = e.target.classList.contains('mbp-nav') ? e.target : e.target.closest('.mbp-nav');
+                                const days = parseInt(btn.dataset.weekNav);
+                                navigateWeek(days);
+                            }
+                        });
+
+                        // تابعهای مدیریت رزرو
+                        async function approveBooking(appointmentId, button) {
+                            if (!appointmentId) return;
+
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_approve_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ رزرو تایید شد');
+
+                                    // آپدیت UI
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        const statusEl = card.querySelector('.mbp-status-pending');
+                                        if (statusEl) {
+                                            statusEl.className = 'mbp-status-approved';
+                                            statusEl.textContent = 'Approved';
+                                        }
+                                        button.remove(); // حذف دکمه تایید
+                                    }
+
+                                    updateTotal(0); // رفرش آمار
+                                } else {
+                                    toast(data.data?.message || 'خطا در تایید رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
                                 }
+                            } catch (error) {
+                                console.error('Approve booking error:', error);
+                                toast('خطای شبکه در تایید رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
 
-                                container.innerHTML = `
+                        async function cancelBooking(appointmentId, button) {
+                            if (!appointmentId || !confirm('آیا از لغو این رزرو مطمئن هستید؟')) return;
+
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_cancel_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('⚠️ رزرو لغو شد');
+
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        card.style.opacity = '0.5';
+                                        card.style.filter = 'grayscale(1)';
+                                    }
+                                } else {
+                                    toast(data.data?.message || 'خطا در لغو رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }
+                            } catch (error) {
+                                console.error('Cancel booking error:', error);
+                                toast('خطای شبکه در لغو رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        async function deleteBooking(appointmentId, button) {
+                            if (!appointmentId || !confirm('⚠️ آیا از حذف این رزرو مطمئن هستید؟ این عمل قابل بازگشت نیست.')) return;
+
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_admin_delete_booking');
+                                formData.append('id', appointmentId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('🗑️ رزرو حذف شد');
+
+                                    const card = button.closest('.mbp-booking-card');
+                                    if (card) {
+                                        card.style.animation = 'fadeOut 0.3s ease';
+                                        setTimeout(() => card.remove(), 300);
+                                    }
+
+                                    updateTotal(-1);
+                                } else {
+                                    toast(data.data?.message || 'خطا در حذف رزرو', 'error');
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }
+                            } catch (error) {
+                                console.error('Delete booking error:', error);
+                                toast('خطای شبکه در حذف رزرو', 'error');
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        async function navigateWeek(days) {
+                            const scheduleWrap = document.querySelector('.mbp-schedule-wrap');
+                            if (!scheduleWrap) return;
+
+                            const currentWeekStart = scheduleWrap.dataset.weekStart;
+                            const currentDate = new Date(currentWeekStart);
+                            currentDate.setDate(currentDate.getDate() + days);
+
+                            const newWeekStart = currentDate.toISOString().split('T')[0];
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_get_schedule_week');
+                                formData.append('week_start', newWeekStart);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success && data.data.html) {
+                                    document.getElementById('mbp-schedule-root').innerHTML = data.data.html;
+                                }
+                            } catch (error) {
+                                console.error('Navigate week error:', error);
+                                toast('خطا در بارگذاری هفته', 'error');
+                            }
+                        }
+
+                        // بارگذاری اولیه
+                        const initialView = localStorage.getItem('mbp_active_view') || 'dashboard';
+                        const initialItem = document.querySelector(`a.item[data-view="${initialView}"]`) || document.querySelector('a.item.active');
+
+                        if (initialItem) {
+                            setActive(initialItem);
+                            render(initialItem.dataset.view);
+                        } else {
+                            render('dashboard');
+                        }
+
+                        // ==================== تابع‌های AJAX ====================
+
+                        async function loadServices() {
+                            console.log('🔄 Loading services...');
+                            const container = document.querySelector('#mbp-view #mbp-services-container');
+                            if (!container) {
+                                console.error('❌ Services container not found');
+                                return;
+                            }
+
+                            container.innerHTML = `
                                 <div style="text-align:center;color:#cbd5e1;padding:40px;">
                                     <div class="mbp-loading" style="width:40px;height:40px;margin:0 auto 15px;"></div>
                                     <div>در حال بارگذاری خدمات و تنظیمات...</div>
                                 </div>
                             `;
 
-                                try {
-                                    const fd = new FormData();
-                                    fd.append('action', 'mbp_get_services');
-                                    fd.append('nonce', window.MBP_ADMIN_NONCE);
+                            try {
+                                const fd = new FormData();
+                                fd.append('action', 'mbp_get_services');
+                                fd.append('nonce', window.MBP_ADMIN_NONCE);
 
-                                    console.log('📤 Sending AJAX request...');
+                                console.log('📤 Sending AJAX request...');
 
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: fd
-                                    });
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: fd
+                                });
 
-                                    console.log('📥 Response status:', response.status, response.statusText);
+                                console.log('📥 Response status:', response.status, response.statusText);
 
-                                    if (!response.ok) {
-                                        throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
-                                    }
+                                if (!response.ok) {
+                                    throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+                                }
 
-                                    const data = await response.json();
-                                    console.log('📊 Response data:', data);
+                                const data = await response.json();
+                                console.log('📊 Response data:', data);
 
-                                    if (data.success && data.data && data.data.html) {
-                                        console.log('✅ Services loaded successfully');
-                                        container.innerHTML = data.data.html;
+                                if (data.success && data.data && data.data.html) {
+                                    console.log('✅ Services loaded successfully');
+                                    container.innerHTML = data.data.html;
 
-                                        // فعال‌سازی event listenerها بعد از لود HTML
-                                        setTimeout(initServicesEvents, 50);
+                                    // فعال‌سازی event listenerها بعد از لود HTML
+                                    setTimeout(initServicesEvents, 50);
 
-                                    } else {
-                                        const errorMsg = data.data?.message || 'خطای نامشخص';
-                                        console.error('❌ Service load error:', errorMsg);
+                                } else {
+                                    const errorMsg = data.data?.message || 'خطای نامشخص';
+                                    console.error('❌ Service load error:', errorMsg);
 
-                                        container.innerHTML = `
+                                    container.innerHTML = `
                                         <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:12px;padding:30px;color:#ef4444;text-align:center;">
                                             <div style="font-size:18px;font-weight:900;margin-bottom:10px;">⚠️ خطا</div>
                                             <div style="margin-bottom:20px;">${errorMsg}</div>
@@ -5283,12 +5330,12 @@ JS;
                                             </button>
                                         </div>
                                     `;
-                                    }
+                                }
 
-                                } catch (error) {
-                                    console.error('❌ Network error:', error);
+                            } catch (error) {
+                                console.error('❌ Network error:', error);
 
-                                    container.innerHTML = `
+                                container.innerHTML = `
                                     <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:12px;padding:30px;color:#ef4444;text-align:center;">
                                         <div style="font-size:18px;font-weight:900;margin-bottom:10px;">🌐 خطای شبکه</div>
                                         <div style="margin-bottom:20px;font-size:14px;">${error.message}</div>
@@ -5302,122 +5349,122 @@ JS;
                                         </div>
                                     </div>
                                 `;
-                                }
                             }
+                        }
 
-                            function initServicesEvents() {
-                                console.log('🔧 Initializing services events...');
+                        function initServicesEvents() {
+                            console.log('🔧 Initializing services events...');
 
-                                // ========== مدیریت تب‌های داخلی ==========
-                                const tabButtons = document.querySelectorAll('.mbp-settings-tab');
-                                tabButtons.forEach(tab => {
-                                    tab.addEventListener('click', function (e) {
-                                        e.preventDefault();
-                                        const tabName = this.dataset.tab;
-                                        console.log('📌 Inner tab clicked:', tabName);
+                            // ========== مدیریت تب‌های داخلی ==========
+                            const tabButtons = document.querySelectorAll('.mbp-settings-tab');
+                            tabButtons.forEach(tab => {
+                                tab.addEventListener('click', function (e) {
+                                    e.preventDefault();
+                                    const tabName = this.dataset.tab;
+                                    console.log('📌 Inner tab clicked:', tabName);
 
-                                        // حذف active از همه
-                                        tabButtons.forEach(t => t.classList.remove('active'));
-                                        // اضافه کردن active به تب کلیک شده
-                                        this.classList.add('active');
+                                    // حذف active از همه
+                                    tabButtons.forEach(t => t.classList.remove('active'));
+                                    // اضافه کردن active به تب کلیک شده
+                                    this.classList.add('active');
 
-                                        // مخفی کردن همه paneها
-                                        document.querySelectorAll('.mbp-tab-pane').forEach(pane => {
-                                            pane.classList.remove('active');
-                                        });
-
-                                        // نمایش pane مربوطه
-                                        const pane = document.getElementById('tab-' + tabName);
-                                        if (pane) {
-                                            pane.classList.add('active');
-                                        }
+                                    // مخفی کردن همه paneها
+                                    document.querySelectorAll('.mbp-tab-pane').forEach(pane => {
+                                        pane.classList.remove('active');
                                     });
-                                });
 
-                                // ========== مدیریت فرم خدمات ==========
-                                const serviceForm = document.getElementById('mbp-service-form');
-                                if (serviceForm) {
-                                    serviceForm.addEventListener('submit', function (e) {
-                                        e.preventDefault();
-                                        saveService(this);
-                                    });
-                                }
-
-                                // ========== دکمه افزودن خدمت ==========
-                                const addServiceBtn = document.getElementById('mbp-add-service');
-                                if (addServiceBtn) {
-                                    addServiceBtn.addEventListener('click', function () {
-                                        openServiceModal();
-                                    });
-                                }
-
-                                // ========== دکمه‌های ویرایش ==========
-                                document.addEventListener('click', function (e) {
-                                    // ویرایش خدمت
-                                    if (e.target.classList.contains('mbp-edit-service') || e.target.closest('.mbp-edit-service')) {
-                                        e.preventDefault();
-                                        const btn = e.target.classList.contains('mbp-edit-service') ? e.target : e.target.closest('.mbp-edit-service');
-                                        const serviceId = btn.dataset.id;
-                                        editService(serviceId);
-                                    }
-
-                                    // فعال/غیرفعال کردن خدمت
-                                    if (e.target.classList.contains('mbp-toggle-service') || e.target.closest('.mbp-toggle-service')) {
-                                        e.preventDefault();
-                                        const btn = e.target.classList.contains('mbp-toggle-service') ? e.target : e.target.closest('.mbp-toggle-service');
-                                        const serviceId = btn.dataset.id;
-                                        toggleService(serviceId, btn);
-                                    }
-
-                                    // حذف خدمت
-                                    if (e.target.classList.contains('mbp-delete-service') || e.target.closest('.mbp-delete-service')) {
-                                        e.preventDefault();
-                                        const btn = e.target.classList.contains('mbp-delete-service') ? e.target : e.target.closest('.mbp-delete-service');
-                                        const serviceId = btn.dataset.id;
-                                        deleteService(serviceId, btn);
+                                    // نمایش pane مربوطه
+                                    const pane = document.getElementById('tab-' + tabName);
+                                    if (pane) {
+                                        pane.classList.add('active');
                                     }
                                 });
+                            });
 
-                                // ========== فرم تنظیمات پیامک ==========
-                                const smsForm = document.getElementById('mbp-sms-settings-form');
-                                if (smsForm) {
-                                    smsForm.addEventListener('submit', function (e) {
-                                        e.preventDefault();
-                                        saveSMSSettings(this);
-                                    });
-                                }
-
-                                // ========== فرم تنظیمات درگاه ==========
-                                const paymentForm = document.getElementById('mbp-payment-settings-form');
-                                if (paymentForm) {
-                                    paymentForm.addEventListener('submit', function (e) {
-                                        e.preventDefault();
-                                        savePaymentSettings(this);
-                                    });
-                                }
-
-                                // ========== فرم تنظیمات عمومی ==========
-                                const generalForm = document.getElementById('mbp-general-settings-form');
-                                if (generalForm) {
-                                    generalForm.addEventListener('submit', function (e) {
-                                        e.preventDefault();
-                                        saveGeneralSettings(this);
-                                    });
-                                }
-
-                                // ========== تست پیامک ==========
-                                const testSmsBtn = document.getElementById('mbp-test-sms');
-                                if (testSmsBtn) {
-                                    testSmsBtn.addEventListener('click', testSMS);
-                                }
-
-                                console.log('✅ Services events initialized');
+                            // ========== مدیریت فرم خدمات ==========
+                            const serviceForm = document.getElementById('mbp-service-form');
+                            if (serviceForm) {
+                                serviceForm.addEventListener('submit', function (e) {
+                                    e.preventDefault();
+                                    saveService(this);
+                                });
                             }
 
-                            // ==================== تابع‌های کمکی خدمات ====================
+                            // ========== دکمه افزودن خدمت ==========
+                            const addServiceBtn = document.getElementById('mbp-add-service');
+                            if (addServiceBtn) {
+                                addServiceBtn.addEventListener('click', function () {
+                                    openServiceModal();
+                                });
+                            }
 
-                            function openServiceModal(serviceData = null) {
-                                const modalHTML = `
+                            // ========== دکمه‌های ویرایش ==========
+                            document.addEventListener('click', function (e) {
+                                // ویرایش خدمت
+                                if (e.target.classList.contains('mbp-edit-service') || e.target.closest('.mbp-edit-service')) {
+                                    e.preventDefault();
+                                    const btn = e.target.classList.contains('mbp-edit-service') ? e.target : e.target.closest('.mbp-edit-service');
+                                    const serviceId = btn.dataset.id;
+                                    editService(serviceId);
+                                }
+
+                                // فعال/غیرفعال کردن خدمت
+                                if (e.target.classList.contains('mbp-toggle-service') || e.target.closest('.mbp-toggle-service')) {
+                                    e.preventDefault();
+                                    const btn = e.target.classList.contains('mbp-toggle-service') ? e.target : e.target.closest('.mbp-toggle-service');
+                                    const serviceId = btn.dataset.id;
+                                    toggleService(serviceId, btn);
+                                }
+
+                                // حذف خدمت
+                                if (e.target.classList.contains('mbp-delete-service') || e.target.closest('.mbp-delete-service')) {
+                                    e.preventDefault();
+                                    const btn = e.target.classList.contains('mbp-delete-service') ? e.target : e.target.closest('.mbp-delete-service');
+                                    const serviceId = btn.dataset.id;
+                                    deleteService(serviceId, btn);
+                                }
+                            });
+
+                            // ========== فرم تنظیمات پیامک ==========
+                            const smsForm = document.getElementById('mbp-sms-settings-form');
+                            if (smsForm) {
+                                smsForm.addEventListener('submit', function (e) {
+                                    e.preventDefault();
+                                    saveSMSSettings(this);
+                                });
+                            }
+
+                            // ========== فرم تنظیمات درگاه ==========
+                            const paymentForm = document.getElementById('mbp-payment-settings-form');
+                            if (paymentForm) {
+                                paymentForm.addEventListener('submit', function (e) {
+                                    e.preventDefault();
+                                    savePaymentSettings(this);
+                                });
+                            }
+
+                            // ========== فرم تنظیمات عمومی ==========
+                            const generalForm = document.getElementById('mbp-general-settings-form');
+                            if (generalForm) {
+                                generalForm.addEventListener('submit', function (e) {
+                                    e.preventDefault();
+                                    saveGeneralSettings(this);
+                                });
+                            }
+
+                            // ========== تست پیامک ==========
+                            const testSmsBtn = document.getElementById('mbp-test-sms');
+                            if (testSmsBtn) {
+                                testSmsBtn.addEventListener('click', testSMS);
+                            }
+
+                            console.log('✅ Services events initialized');
+                        }
+
+                        // ==================== تابع‌های کمکی خدمات ====================
+
+                        function openServiceModal(serviceData = null) {
+                            const modalHTML = `
                                 <div class="mbp-modal-overlay" id="mbp-service-modal">
                                     <div class="mbp-modal">
                                         <div class="mbp-modal-header">
@@ -5453,388 +5500,388 @@ JS;
                                 </div>
                             `;
 
-                                document.body.insertAdjacentHTML('beforeend', modalHTML);
+                            document.body.insertAdjacentHTML('beforeend', modalHTML);
 
-                                // اضافه کردن event listener به فرم
-                                const form = document.getElementById('mbp-service-modal-form');
-                                form.addEventListener('submit', function (e) {
-                                    e.preventDefault();
-                                    saveServiceFromModal(this);
-                                });
-                            }
-
-                            function closeServiceModal() {
-                                const modal = document.getElementById('mbp-service-modal');
-                                if (modal) {
-                                    modal.style.animation = 'fadeOut 0.2s ease';
-                                    setTimeout(() => modal.remove(), 200);
-                                }
-                            }
-
-                            async function saveServiceFromModal(form) {
-                                const submitBtn = form.querySelector('button[type="submit"]');
-                                const originalText = submitBtn.innerHTML;
-                                submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
-                                submitBtn.disabled = true;
-
-                                try {
-                                    const formData = new FormData(form);
-                                    formData.append('action', 'mbp_save_service');
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ خدمت با موفقیت ذخیره شد');
-                                        closeServiceModal();
-                                        // رفرش لیست خدمات
-                                        setTimeout(loadServices, 500);
-                                    } else {
-                                        toast(data.data?.message || 'خطا در ذخیره خدمت', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در ذخیره خدمت', 'error');
-                                    console.error('Save service error:', error);
-                                } finally {
-                                    submitBtn.innerHTML = originalText;
-                                    submitBtn.disabled = false;
-                                }
-                            }
-
-                            function editService(serviceId) {
-                                const row = document.querySelector(`tr[data-service-id="${serviceId}"]`);
-                                if (!row) return;
-
-                                const serviceData = {
-                                    id: serviceId,
-                                    name: row.querySelector('td:nth-child(2) strong')?.textContent || '',
-                                    description: row.querySelector('td:nth-child(3)')?.textContent || '',
-                                    duration: parseInt(row.querySelector('td:nth-child(4)')?.textContent || 30),
-                                    price: parseInt((row.querySelector('td:nth-child(5)')?.textContent || '0').replace(/,/g, ''))
-                                };
-
-                                openServiceModal(serviceData);
-                            }
-
-                            async function toggleService(serviceId, button) {
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_toggle_service');
-                                    formData.append('id', serviceId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        const newStatus = data.data.new_status;
-                                        button.dataset.status = newStatus;
-                                        button.textContent = newStatus ? 'غیرفعال' : 'فعال';
-
-                                        const statusSpan = button.closest('tr').querySelector('.service-status');
-                                        statusSpan.classList.remove('active', 'inactive');
-                                        statusSpan.classList.add(newStatus ? 'active' : 'inactive');
-                                        statusSpan.textContent = newStatus ? 'فعال' : 'غیرفعال';
-
-                                        toast(newStatus ? '✅ خدمت فعال شد' : '⚠️ خدمت غیرفعال شد');
-                                    } else {
-                                        toast(data.data?.message || 'خطا در تغییر وضعیت', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در تغییر وضعیت', 'error');
-                                    console.error('Toggle service error:', error);
-                                } finally {
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            async function deleteService(serviceId, button) {
-                                if (!confirm('⚠️ آیا از حذف این خدمت مطمئن هستید؟ این عمل قابل بازگشت نیست.')) {
-                                    return;
-                                }
-
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span>';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_delete_service');
-                                    formData.append('id', serviceId);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('🗑️ خدمت با موفقیت حذف شد');
-                                        button.closest('tr').style.opacity = '0.5';
-                                        setTimeout(() => {
-                                            button.closest('tr').remove();
-                                        }, 300);
-                                    } else {
-                                        toast(data.data?.message || 'خطا در حذف خدمت', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در حذف خدمت', 'error');
-                                    console.error('Delete service error:', error);
-                                } finally {
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            // ==================== تابع‌های تنظیمات ====================
-
-                            async function saveSMSSettings(form) {
-                                const submitBtn = form.querySelector('#mbp-sms-save');
-                                const originalText = submitBtn.innerHTML;
-                                submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
-                                submitBtn.disabled = true;
-
-                                try {
-                                    const formData = new FormData(form);
-                                    formData.append('action', 'mbp_save_sms_settings');
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ تنظیمات پیامک ذخیره شد');
-                                    } else {
-                                        toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در ذخیره تنظیمات', 'error');
-                                    console.error('Save SMS settings error:', error);
-                                } finally {
-                                    submitBtn.innerHTML = originalText;
-                                    submitBtn.disabled = false;
-                                }
-                            }
-
-                            async function savePaymentSettings(form) {
-                                const submitBtn = form.querySelector('#mbp-payment-save');
-                                const originalText = submitBtn.innerHTML;
-                                submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
-                                submitBtn.disabled = true;
-
-                                try {
-                                    const formData = new FormData(form);
-                                    formData.append('action', 'mbp_save_payment_settings');
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ تنظیمات درگاه پرداخت ذخیره شد');
-                                    } else {
-                                        toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در ذخیره تنظیمات', 'error');
-                                    console.error('Save payment settings error:', error);
-                                } finally {
-                                    submitBtn.innerHTML = originalText;
-                                    submitBtn.disabled = false;
-                                }
-                            }
-
-                            async function saveGeneralSettings(form) {
-                                const submitBtn = form.querySelector('#mbp-general-save');
-                                const originalText = submitBtn.innerHTML;
-                                submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
-                                submitBtn.disabled = true;
-
-                                try {
-                                    const formData = new FormData(form);
-                                    formData.append('action', 'mbp_save_general_settings');
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        toast('✅ تنظیمات عمومی ذخیره شد');
-                                    } else {
-                                        toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
-                                    }
-                                } catch (error) {
-                                    toast('خطای شبکه در ذخیره تنظیمات', 'error');
-                                    console.error('Save general settings error:', error);
-                                } finally {
-                                    submitBtn.innerHTML = originalText;
-                                    submitBtn.disabled = false;
-                                }
-                            }
-
-                            async function testSMS() {
-                                const phone = prompt('شماره موبایل برای تست پیامک را وارد کنید:');
-                                if (!phone || !/^09[0-9]{9}$/.test(phone)) {
-                                    alert('⚠️ شماره موبایل معتبر وارد کنید (مثال: 09123456789)');
-                                    return;
-                                }
-
-                                const button = document.getElementById('mbp-test-sms');
-                                const originalText = button.innerHTML;
-                                button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span> در حال ارسال...';
-                                button.disabled = true;
-
-                                try {
-                                    const formData = new FormData();
-                                    formData.append('action', 'mbp_test_sms');
-                                    formData.append('phone', phone);
-                                    formData.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    const response = await fetch(window.MBP_AJAX_URL, {
-                                        method: 'POST',
-                                        body: formData
-                                    });
-
-                                    const data = await response.json();
-
-                                    if (data.success) {
-                                        alert('✅ پیامک تست با موفقیت ارسال شد');
-                                    } else {
-                                        alert('❌ ' + (data.data?.message || 'خطا در ارسال پیامک'));
-                                    }
-                                } catch (error) {
-                                    alert('❌ خطای شبکه در ارسال پیامک');
-                                    console.error('Test SMS error:', error);
-                                } finally {
-                                    button.innerHTML = originalText;
-                                    button.disabled = false;
-                                }
-                            }
-
-                            // ==================== تابع time slots ====================
-
-                            async function initSlots() {
-                                const ta = document.querySelector('#mbp-view #mbp-slots-text');
-                                const btnSave = document.querySelector('#mbp-view #mbp-slots-save');
-                                const btnLoad = document.querySelector('#mbp-view #mbp-slots-load');
-                                if (!ta || !btnSave || !btnLoad) return;
-
-                                async function load() {
-                                    const fd = new FormData();
-                                    fd.append('action', 'mbp_get_time_slots');
-                                    fd.append('nonce', window.MBP_ADMIN_NONCE);
-
-                                    btnSave.disabled = true;
-                                    btnLoad.disabled = true;
-
-                                    try {
-                                        const res = await fetch(window.MBP_AJAX_URL, {
-                                            method: "POST",
-                                            body: fd
-                                        });
-
-                                        if (!res.ok) {
-                                            throw new Error(`HTTP error! status: ${res.status}`);
-                                        }
-
-                                        const data = await res.json();
-
-                                        if (!data.success) {
-                                            toast(data?.data?.message || 'خطا در دریافت اطلاعات', 'error');
-                                            return;
-                                        }
-
-                                        if (data.data && data.data.slots) {
-                                            ta.value = data.data.slots.join("\n");
-                                        } else {
-                                            ta.value = "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00";
-                                        }
-                                    } catch (err) {
-                                        console.error('Error loading slots:', err);
-                                        toast('خطای شبکه در بارگذاری اسلات‌ها', 'error');
-                                        ta.value = "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00";
-                                    } finally {
-                                        btnSave.disabled = false;
-                                        btnLoad.disabled = false;
-                                    }
-                                }
-
-                                btnLoad.onclick = (e) => {
-                                    e.preventDefault();
-                                    load();
-                                };
-
-                                btnSave.onclick = async (e) => {
-                                    e.preventDefault();
-                                    btnSave.disabled = true;
-                                    const fd = new FormData();
-                                    fd.append('action', 'mbp_save_time_slots');
-                                    fd.append('nonce', window.MBP_ADMIN_NONCE);
-                                    fd.append('slots_text', ta.value || '');
-
-                                    try {
-                                        const res = await fetch(window.MBP_AJAX_URL, {
-                                            method: "POST",
-                                            body: fd
-                                        });
-
-                                        if (!res.ok) {
-                                            throw new Error(`HTTP error! status: ${res.status}`);
-                                        }
-
-                                        const data = await res.json();
-
-                                        if (!data.success) {
-                                            toast(data?.data?.message || 'خطا در ذخیره', 'error');
-                                            return;
-                                        }
-
-                                        toast('✅ ذخیره شد');
-                                        load(); // بارگذاری مجدد
-                                    } catch (err) {
-                                        console.error('Error saving slots:', err);
-                                        toast('خطای شبکه در ذخیره اسلات‌ها', 'error');
-                                    } finally {
-                                        btnSave.disabled = false;
-                                    }
-                                };
-
-                                load(); // بارگذاری اولیه
-                            }
-
-                        } catch (err) {
-                            hardFail('اسکریپت پنل کرش کرد. Console را هم چک کن.', err);
+                            // اضافه کردن event listener به فرم
+                            const form = document.getElementById('mbp-service-modal-form');
+                            form.addEventListener('submit', function (e) {
+                                e.preventDefault();
+                                saveServiceFromModal(this);
+                            });
                         }
-                    });
-                })();
+
+                        function closeServiceModal() {
+                            const modal = document.getElementById('mbp-service-modal');
+                            if (modal) {
+                                modal.style.animation = 'fadeOut 0.2s ease';
+                                setTimeout(() => modal.remove(), 200);
+                            }
+                        }
+
+                        async function saveServiceFromModal(form) {
+                            const submitBtn = form.querySelector('button[type="submit"]');
+                            const originalText = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
+                            submitBtn.disabled = true;
+
+                            try {
+                                const formData = new FormData(form);
+                                formData.append('action', 'mbp_save_service');
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ خدمت با موفقیت ذخیره شد');
+                                    closeServiceModal();
+                                    // رفرش لیست خدمات
+                                    setTimeout(loadServices, 500);
+                                } else {
+                                    toast(data.data?.message || 'خطا در ذخیره خدمت', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در ذخیره خدمت', 'error');
+                                console.error('Save service error:', error);
+                            } finally {
+                                submitBtn.innerHTML = originalText;
+                                submitBtn.disabled = false;
+                            }
+                        }
+
+                        function editService(serviceId) {
+                            const row = document.querySelector(`tr[data-service-id="${serviceId}"]`);
+                            if (!row) return;
+
+                            const serviceData = {
+                                id: serviceId,
+                                name: row.querySelector('td:nth-child(2) strong')?.textContent || '',
+                                description: row.querySelector('td:nth-child(3)')?.textContent || '',
+                                duration: parseInt(row.querySelector('td:nth-child(4)')?.textContent || 30),
+                                price: parseInt((row.querySelector('td:nth-child(5)')?.textContent || '0').replace(/,/g, ''))
+                            };
+
+                            openServiceModal(serviceData);
+                        }
+
+                        async function toggleService(serviceId, button) {
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_toggle_service');
+                                formData.append('id', serviceId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    const newStatus = data.data.new_status;
+                                    button.dataset.status = newStatus;
+                                    button.textContent = newStatus ? 'غیرفعال' : 'فعال';
+
+                                    const statusSpan = button.closest('tr').querySelector('.service-status');
+                                    statusSpan.classList.remove('active', 'inactive');
+                                    statusSpan.classList.add(newStatus ? 'active' : 'inactive');
+                                    statusSpan.textContent = newStatus ? 'فعال' : 'غیرفعال';
+
+                                    toast(newStatus ? '✅ خدمت فعال شد' : '⚠️ خدمت غیرفعال شد');
+                                } else {
+                                    toast(data.data?.message || 'خطا در تغییر وضعیت', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در تغییر وضعیت', 'error');
+                                console.error('Toggle service error:', error);
+                            } finally {
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        async function deleteService(serviceId, button) {
+                            if (!confirm('⚠️ آیا از حذف این خدمت مطمئن هستید؟ این عمل قابل بازگشت نیست.')) {
+                                return;
+                            }
+
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span>';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_delete_service');
+                                formData.append('id', serviceId);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('🗑️ خدمت با موفقیت حذف شد');
+                                    button.closest('tr').style.opacity = '0.5';
+                                    setTimeout(() => {
+                                        button.closest('tr').remove();
+                                    }, 300);
+                                } else {
+                                    toast(data.data?.message || 'خطا در حذف خدمت', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در حذف خدمت', 'error');
+                                console.error('Delete service error:', error);
+                            } finally {
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        // ==================== تابع‌های تنظیمات ====================
+
+                        async function saveSMSSettings(form) {
+                            const submitBtn = form.querySelector('#mbp-sms-save');
+                            const originalText = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
+                            submitBtn.disabled = true;
+
+                            try {
+                                const formData = new FormData(form);
+                                formData.append('action', 'mbp_save_sms_settings');
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ تنظیمات پیامک ذخیره شد');
+                                } else {
+                                    toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در ذخیره تنظیمات', 'error');
+                                console.error('Save SMS settings error:', error);
+                            } finally {
+                                submitBtn.innerHTML = originalText;
+                                submitBtn.disabled = false;
+                            }
+                        }
+
+                        async function savePaymentSettings(form) {
+                            const submitBtn = form.querySelector('#mbp-payment-save');
+                            const originalText = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
+                            submitBtn.disabled = true;
+
+                            try {
+                                const formData = new FormData(form);
+                                formData.append('action', 'mbp_save_payment_settings');
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ تنظیمات درگاه پرداخت ذخیره شد');
+                                } else {
+                                    toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در ذخیره تنظیمات', 'error');
+                                console.error('Save payment settings error:', error);
+                            } finally {
+                                submitBtn.innerHTML = originalText;
+                                submitBtn.disabled = false;
+                            }
+                        }
+
+                        async function saveGeneralSettings(form) {
+                            const submitBtn = form.querySelector('#mbp-general-save');
+                            const originalText = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<span class="mbp-loading" style="width:16px;height:16px;display:inline-block;margin-left:5px;"></span> در حال ذخیره...';
+                            submitBtn.disabled = true;
+
+                            try {
+                                const formData = new FormData(form);
+                                formData.append('action', 'mbp_save_general_settings');
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    toast('✅ تنظیمات عمومی ذخیره شد');
+                                } else {
+                                    toast(data.data?.message || 'خطا در ذخیره تنظیمات', 'error');
+                                }
+                            } catch (error) {
+                                toast('خطای شبکه در ذخیره تنظیمات', 'error');
+                                console.error('Save general settings error:', error);
+                            } finally {
+                                submitBtn.innerHTML = originalText;
+                                submitBtn.disabled = false;
+                            }
+                        }
+
+                        async function testSMS() {
+                            const phone = prompt('شماره موبایل برای تست پیامک را وارد کنید:');
+                            if (!phone || !/^09[0-9]{9}$/.test(phone)) {
+                                alert('⚠️ شماره موبایل معتبر وارد کنید (مثال: 09123456789)');
+                                return;
+                            }
+
+                            const button = document.getElementById('mbp-test-sms');
+                            const originalText = button.innerHTML;
+                            button.innerHTML = '<span class="mbp-loading" style="width:14px;height:14px;display:inline-block;margin-left:5px;"></span> در حال ارسال...';
+                            button.disabled = true;
+
+                            try {
+                                const formData = new FormData();
+                                formData.append('action', 'mbp_test_sms');
+                                formData.append('phone', phone);
+                                formData.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                const response = await fetch(window.MBP_AJAX_URL, {
+                                    method: 'POST',
+                                    body: formData
+                                });
+
+                                const data = await response.json();
+
+                                if (data.success) {
+                                    alert('✅ پیامک تست با موفقیت ارسال شد');
+                                } else {
+                                    alert('❌ ' + (data.data?.message || 'خطا در ارسال پیامک'));
+                                }
+                            } catch (error) {
+                                alert('❌ خطای شبکه در ارسال پیامک');
+                                console.error('Test SMS error:', error);
+                            } finally {
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }
+                        }
+
+                        // ==================== تابع time slots ====================
+
+                        async function initSlots() {
+                            const ta = document.querySelector('#mbp-view #mbp-slots-text');
+                            const btnSave = document.querySelector('#mbp-view #mbp-slots-save');
+                            const btnLoad = document.querySelector('#mbp-view #mbp-slots-load');
+                            if (!ta || !btnSave || !btnLoad) return;
+
+                            async function load() {
+                                const fd = new FormData();
+                                fd.append('action', 'mbp_get_time_slots');
+                                fd.append('nonce', window.MBP_ADMIN_NONCE);
+
+                                btnSave.disabled = true;
+                                btnLoad.disabled = true;
+
+                                try {
+                                    const res = await fetch(window.MBP_AJAX_URL, {
+                                        method: "POST",
+                                        body: fd
+                                    });
+
+                                    if (!res.ok) {
+                                        throw new Error(`HTTP error! status: ${res.status}`);
+                                    }
+
+                                    const data = await res.json();
+
+                                    if (!data.success) {
+                                        toast(data?.data?.message || 'خطا در دریافت اطلاعات', 'error');
+                                        return;
+                                    }
+
+                                    if (data.data && data.data.slots) {
+                                        ta.value = data.data.slots.join("\n");
+                                    } else {
+                                        ta.value = "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00";
+                                    }
+                                } catch (err) {
+                                    console.error('Error loading slots:', err);
+                                    toast('خطای شبکه در بارگذاری اسلات‌ها', 'error');
+                                    ta.value = "09:00\n09:30\n10:00\n10:30\n11:00\n11:30\n12:00";
+                                } finally {
+                                    btnSave.disabled = false;
+                                    btnLoad.disabled = false;
+                                }
+                            }
+
+                            btnLoad.onclick = (e) => {
+                                e.preventDefault();
+                                load();
+                            };
+
+                            btnSave.onclick = async (e) => {
+                                e.preventDefault();
+                                btnSave.disabled = true;
+                                const fd = new FormData();
+                                fd.append('action', 'mbp_save_time_slots');
+                                fd.append('nonce', window.MBP_ADMIN_NONCE);
+                                fd.append('slots_text', ta.value || '');
+
+                                try {
+                                    const res = await fetch(window.MBP_AJAX_URL, {
+                                        method: "POST",
+                                        body: fd
+                                    });
+
+                                    if (!res.ok) {
+                                        throw new Error(`HTTP error! status: ${res.status}`);
+                                    }
+
+                                    const data = await res.json();
+
+                                    if (!data.success) {
+                                        toast(data?.data?.message || 'خطا در ذخیره', 'error');
+                                        return;
+                                    }
+
+                                    toast('✅ ذخیره شد');
+                                    load(); // بارگذاری مجدد
+                                } catch (err) {
+                                    console.error('Error saving slots:', err);
+                                    toast('خطای شبکه در ذخیره اسلات‌ها', 'error');
+                                } finally {
+                                    btnSave.disabled = false;
+                                }
+                            };
+
+                            load(); // بارگذاری اولیه
+                        }
+
+                    } catch (err) {
+                        hardFail('اسکریپت پنل کرش کرد. Console را هم چک کن.', err);
+                    }
+                });
+                        }) ();
             </script>
 
         </body>
