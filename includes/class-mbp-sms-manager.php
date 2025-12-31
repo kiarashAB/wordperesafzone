@@ -2,67 +2,49 @@
 if (!defined('ABSPATH')) exit;
 
 class MBP_SMS_Manager {
-    
-    private $gateway;
-    private $api_key;
-    private $sender;
-    
+
+    private $settings = [];
+    private $api_key = '';
+    private $sender  = '';
+    private $custom_url = '';
+
     public function __construct() {
-        global $wpdb;
-        $table = $wpdb->prefix . 'mbp_sms_settings';
-        $settings = $wpdb->get_row("SELECT * FROM $table LIMIT 1");
-        
-        if ($settings) {
-            $this->gateway = $settings->gateway ?: 'kavenegar';
-            $this->api_key = $settings->api_key ?: '';
-            $this->sender = $settings->sender_number ?: '';
-        } else {
-            $this->gateway = 'kavenegar';
-            $this->api_key = '';
-            $this->sender = '';
-        }
+        $this->settings   = self::get_settings_array();
+        $this->api_key    = (string) ($this->settings['api_key'] ?? '');
+        $this->sender     = (string) ($this->settings['sender_number'] ?? '');
+        $this->custom_url = (string) ($this->settings['custom_url'] ?? '');
     }
-    
-    // ارسال پیامک عمومی
+
+    /**
+     * ارسال پیامک عمومی (فقط پنل سفارشی)
+     */
     public function send($phone, $message, $type = 'general') {
-        if (!$this->api_key || empty($phone) || empty($message)) {
+        $phone   = $this->normalize_phone((string)$phone);
+        $message = trim((string)$message);
+
+        if (!$this->api_key || !$this->custom_url || $phone === '' || $message === '') {
+            $this->log_sms($phone, $message, $type, false, 'missing_fields_or_settings', 0);
             return false;
         }
-        
-        // حذف صفر اول اگر با 0 شروع شده
-        $phone = ltrim($phone, '0');
-        
-        // اگر شماره با 98 شروع نشده، اضافه کن
-        if (substr($phone, 0, 2) !== '98') {
-            $phone = '98' . $phone;
-        }
-        
-        $result = false;
-        
-        switch($this->gateway) {
-            case 'kavenegar':
-                $result = $this->send_via_kavenegar($phone, $message);
-                break;
-            case 'ghasedak':
-                $result = $this->send_via_ghasedak($phone, $message);
-                break;
-            case 'melipayamak':
-                $result = $this->send_via_melipayamak($phone, $message);
-                break;
-        }
-        
-        // ذخیره لاگ
-        $this->log_sms($phone, $message, $type, $result);
-        
-        return $result;
+
+        $result = $this->send_via_custom_json($phone, $message);
+
+        $this->log_sms(
+            $phone,
+            $message,
+            $type,
+            (bool)$result['ok'],
+            $result['error'] ? $result['error'] : $result['body'],
+            (int)$result['http_code']
+        );
+
+        return (bool)$result['ok'];
     }
-    
+
     // ارسال تأیید رزرو
     public function send_booking_confirmation($phone, $appointment_data) {
-        if (!$this->is_enabled('booking')) {
-            return false;
-        }
-        
+        if (!$this->is_enabled('booking')) return false;
+
         $message = "✅ رزرو شما ثبت شد\n";
         $message .= "👤 نام: {$appointment_data['name']}\n";
         $message .= "📅 تاریخ: {$appointment_data['date']}\n";
@@ -70,180 +52,213 @@ class MBP_SMS_Manager {
         $message .= "💼 خدمت: {$appointment_data['service']}\n";
         $message .= "🔢 کد رهگیری: {$appointment_data['tracking_code']}\n";
         $message .= "با تشکر از اعتماد شما";
-        
+
         return $this->send($phone, $message, 'booking');
     }
-    
+
     // ارسال تأیید پرداخت
     public function send_payment_confirmation($phone, $payment_data) {
-        if (!$this->is_enabled('payment')) {
-            return false;
-        }
-        
+        if (!$this->is_enabled('payment')) return false;
+
         $message = "✅ پرداخت موفق\n";
-        $message .= "💰 مبلغ: " . number_format($payment_data['amount']) . " تومان\n";
+        $message .= "💰 مبلغ: " . number_format((float)$payment_data['amount']) . " تومان\n";
         $message .= "🔢 شماره پیگیری: {$payment_data['ref_id']}\n";
         $message .= "📅 تاریخ: {$payment_data['date']}\n";
         $message .= "با تشکر از پرداخت شما";
-        
+
         return $this->send($phone, $message, 'payment');
     }
-    
+
     // ارسال یادآوری
     public function send_reminder($phone, $appointment_data) {
-        if (!$this->is_enabled('reminder')) {
-            return false;
-        }
-        
+        if (!$this->is_enabled('reminder')) return false;
+
         $message = "⏰ یادآوری نوبت\n";
         $message .= "فردا ساعت {$appointment_data['time']} نوبت شماست\n";
         $message .= "💼 خدمت: {$appointment_data['service']}\n";
         $message .= "📍 آدرس: {$appointment_data['location']}\n";
         $message .= "لطفا سر وقت حاضر شوید";
-        
+
         return $this->send($phone, $message, 'reminder');
     }
-    
+
     // ارسال کد تأیید
     public function send_verification_code($phone, $code) {
         $message = "🔐 کد تأیید شما: {$code}\n";
         $message .= "این کد ۵ دقیقه اعتبار دارد";
-        
         return $this->send($phone, $message, 'verification');
     }
-    
-    // ارسال از طریق کاوه‌نگار
-    private function send_via_kavenegar($phone, $message) {
-        $url = "https://api.kavenegar.com/v1/{$this->api_key}/sms/send.json";
-        
-        $args = array(
-            'body' => array(
-                'receptor' => $phone,
-                'sender'   => $this->sender,
-                'message'  => $message
-            ),
-            'timeout' => 30
-        );
-        
-        $response = wp_remote_post($url, $args);
-        
-        if (is_wp_error($response)) {
-            return false;
+
+    /**
+     * ✅ دقیقاً مطابق عکس:
+     * POST {custom_url}
+     * Headers:
+     *   Content-Type: application/json
+     *   x-api-key: {api_key}   (قابل تغییر از تنظیمات)
+     * JSON Body:
+     *   { SendNumber, Mobile, Message } (قابل تغییر از تنظیمات)
+     */
+    private function send_via_custom_json($phone, $message) {
+        $url = $this->custom_url;
+
+        $hdr_name = !empty($this->settings['custom_header_name']) ? (string)$this->settings['custom_header_name'] : 'x-api-key';
+        $k_send   = !empty($this->settings['custom_key_sendnumber']) ? (string)$this->settings['custom_key_sendnumber'] : 'SendNumber';
+        $k_mobile = !empty($this->settings['custom_key_mobile'])     ? (string)$this->settings['custom_key_mobile']     : 'Mobile';
+        $k_msg    = !empty($this->settings['custom_key_message'])    ? (string)$this->settings['custom_key_message']    : 'Message';
+
+        $payload = [
+            $k_send   => (string)$this->sender,
+            $k_mobile => (string)$phone,
+            $k_msg    => (string)$message,
+        ];
+
+        $args = [
+            'headers' => [
+                'Content-Type' => 'application/json',
+                $hdr_name      => $this->api_key,
+            ],
+            'body'        => wp_json_encode($payload),
+            'timeout'     => 30,
+            'data_format' => 'body',
+        ];
+
+        $res = wp_remote_post($url, $args);
+
+        if (is_wp_error($res)) {
+            return ['ok'=>false,'http_code'=>0,'body'=>'','error'=>$res->get_error_message()];
         }
-        
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        
-        return isset($body['return']['status']) && $body['return']['status'] == 200;
+
+        $code = (int) wp_remote_retrieve_response_code($res);
+        $body = (string) wp_remote_retrieve_body($res);
+
+        // معیار موفقیت: HTTP 2xx
+        return [
+            'ok'        => ($code >= 200 && $code < 300),
+            'http_code' => $code,
+            'body'      => $body,
+            'error'     => '',
+        ];
     }
-    
-    // ارسال از طریق قاصدک
-    private function send_via_ghasedak($phone, $message) {
-        $url = "http://api.ghasedaksms.com/v2/sms/send/simple";
-        
-        $args = array(
-            'headers' => array(
-                'apikey' => $this->api_key
-            ),
-            'body' => array(
-                'message' => $message,
-                'receptor' => $phone,
-                'linenumber' => $this->sender
-            ),
-            'timeout' => 30
-        );
-        
-        $response = wp_remote_post($url, $args);
-        
-        if (is_wp_error($response)) {
-            return false;
+
+    /**
+     * فرمت شماره طبق تنظیمات:
+     * - 0   => 09xxxxxxxxx
+     * - 98  => 989xxxxxxxxx
+     * - raw => همون عدد خام
+     *
+     * پیش‌فرض برای API شما: 0 (مثل عکس که Mobile با 0935... بود)
+     */
+    private function normalize_phone($phone) {
+        $digits = preg_replace('/\D+/', '', (string)$phone);
+        if ($digits === '') return '';
+
+        $fmt = !empty($this->settings['phone_format']) ? (string)$this->settings['phone_format'] : '0';
+
+        if ($fmt === 'raw') {
+            return $digits;
         }
-        
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        
-        return isset($body['result']['code']) && $body['result']['code'] == 200;
-    }
-    
-    // ارسال از طریق ملی پیامک
-    private function send_via_melipayamak($phone, $message) {
-        $url = "https://rest.payamak-panel.com/api/SendSMS/SendSMS";
-        
-        $args = array(
-            'body' => array(
-                'username' => $this->api_key,
-                'password' => '', // اگر نیاز باشد
-                'to' => $phone,
-                'from' => $this->sender,
-                'text' => $message,
-                'isFlash' => false
-            ),
-            'timeout' => 30
-        );
-        
-        $response = wp_remote_post($url, $args);
-        
-        if (is_wp_error($response)) {
-            return false;
+
+        if ($fmt === '98') {
+            if (strpos($digits, '0098') === 0) $digits = substr($digits, 2); // 0098 -> 98
+            if ($digits[0] === '0') $digits = ltrim($digits, '0');
+            if (strpos($digits, '98') !== 0) $digits = '98' . $digits;
+            return $digits;
         }
-        
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        
-        return isset($body['RetStatus']) && $body['RetStatus'] == 1;
+
+        // fmt = 0
+        if (strpos($digits, '0098') === 0) $digits = substr($digits, 4);
+        if (strpos($digits, '98') === 0)   $digits = '0' . substr($digits, 2);
+        if ($digits[0] !== '0') $digits = '0' . $digits;
+        return $digits;
     }
-    
-    // بررسی فعال بودن نوع پیامک
+
     private function is_enabled($type) {
-        global $wpdb;
-        $table = $wpdb->prefix . 'mbp_sms_settings';
-        $settings = $wpdb->get_row("SELECT * FROM $table LIMIT 1");
-        
-        if (!$settings) return false;
-        
-        switch($type) {
-            case 'booking':
-                return (bool) $settings->enable_booking_sms;
-            case 'payment':
-                return (bool) $settings->enable_payment_sms;
-            case 'reminder':
-                return (bool) $settings->enable_reminder_sms;
-            default:
-                return true;
+        switch ($type) {
+            case 'booking':  return !empty($this->settings['enable_booking_sms']);
+            case 'payment':  return !empty($this->settings['enable_payment_sms']);
+            case 'reminder': return !empty($this->settings['enable_reminder_sms']);
+            default:         return true;
         }
     }
-    
-    // ذخیره لاگ پیامک
-    private function log_sms($phone, $message, $type, $status) {
+
+    private function log_sms($phone, $message, $type, $status, $response = '', $http_code = 0) {
         global $wpdb;
         $table = $wpdb->prefix . 'mbp_sms_logs';
-        
-        $wpdb->insert($table, array(
-            'phone' => $phone,
-            'message' => $message,
-            'type' => $type,
-            'status' => $status ? 1 : 0,
-            'response' => json_encode($status)
-        ));
+
+        $wpdb->insert($table, [
+            'phone'      => (string)$phone,
+            'message'    => (string)$message,
+            'type'       => (string)$type,
+            'status'     => $status ? 1 : 0,
+            'http_code'  => (int)$http_code,
+            'response'   => is_string($response) ? $response : wp_json_encode($response),
+            'created_at' => current_time('mysql'),
+        ]);
     }
-    
-    // دریافت تنظیمات
-    public static function get_settings() {
+
+    // -----------------------
+    // DB Settings
+    // -----------------------
+
+    public static function get_settings_array(): array {
         global $wpdb;
         $table = $wpdb->prefix . 'mbp_sms_settings';
-        return $wpdb->get_row("SELECT * FROM $table LIMIT 1");
+
+        $row = $wpdb->get_row("SELECT * FROM $table WHERE id=1 LIMIT 1", ARRAY_A);
+        if (!is_array($row)) $row = [];
+
+        $defaults = [
+            'id' => 1,
+            'api_key' => '',
+            'sender_number' => '',
+            'custom_url' => '',
+
+            'custom_header_name' => 'x-api-key',
+            'custom_key_sendnumber' => 'SendNumber',
+            'custom_key_mobile'     => 'Mobile',
+            'custom_key_message'    => 'Message',
+
+            'phone_format' => '0',
+
+            'enable_booking_sms' => 0,
+            'enable_payment_sms' => 0,
+            'enable_reminder_sms' => 0,
+        ];
+
+        return array_merge($defaults, $row);
     }
-    
-    // ذخیره تنظیمات
-    public static function save_settings($data) {
+
+    public static function save_settings($data): bool {
         global $wpdb;
         $table = $wpdb->prefix . 'mbp_sms_settings';
-        
-        $exists = $wpdb->get_var("SELECT COUNT(*) FROM $table");
-        
-        if ($exists) {
-            $wpdb->update($table, $data, array('id' => 1));
-        } else {
-            $wpdb->insert($table, $data);
+
+        $current = self::get_settings_array();
+        $allowed = array_keys($current);
+
+        $payload = [];
+
+        foreach ($allowed as $k) {
+            if ($k === 'id') continue;
+
+            $v = isset($data[$k]) ? $data[$k] : $current[$k];
+
+            if ($k === 'custom_url') {
+                $payload[$k] = esc_url_raw((string)$v);
+            } elseif (in_array($k, ['enable_booking_sms','enable_payment_sms','enable_reminder_sms'], true)) {
+                $payload[$k] = (int) (!!$v);
+            } else {
+                $payload[$k] = sanitize_text_field((string)$v);
+            }
         }
-        
+
+        $exists = (int)$wpdb->get_var("SELECT COUNT(*) FROM $table WHERE id=1");
+        if ($exists) {
+            $wpdb->update($table, $payload, ['id' => 1]);
+        } else {
+            $payload['id'] = 1;
+            $wpdb->insert($table, $payload);
+        }
+
         return true;
     }
 }

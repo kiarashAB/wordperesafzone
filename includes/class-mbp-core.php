@@ -8,7 +8,6 @@ class MBP_Core
     const OPTION_TIME_SLOTS = 'mbp_time_slots_v1';
     const OPTION_PAYMENT_SETTINGS = 'mbp_payment_settings_v1';
     const OPTION_GENERAL_SETTINGS = 'mbp_general_settings_v1';
-
     public function __construct()
     {
         // Admin Menu
@@ -103,10 +102,22 @@ class MBP_Core
         add_action('wp_ajax_mbp_get_invoices', [$this, 'ajax_get_invoices']);
         add_action('wp_ajax_mbp_invoice_delete', [$this, 'ajax_invoice_delete']);
         add_action('wp_ajax_mbp_invoice_print', [$this, 'ajax_invoice_print']);
+        add_action('wp_ajax_mbp_print_invoice', [$this, 'ajax_print_invoice']);
+        add_action('wp_ajax_mbp_delete_invoice', [$this, 'ajax_delete_invoice']);
+        add_action('wp_ajax_mbp_get_wc_orders', [$this, 'ajax_get_wc_orders']);
+add_action('wp_ajax_mbp_create_invoice_from_wc_order', [$this, 'ajax_create_invoice_from_wc_order']);
+
+add_action('wp_ajax_mbp_get_invoice_settings', array($this, 'ajax_get_invoice_settings'));
+add_action('wp_ajax_mbp_save_invoice_settings', array($this, 'ajax_save_invoice_settings'));
+add_action('wp_ajax_mbp_get_sms_settings', 'mbp_ajax_get_sms_settings');
+add_action('wp_ajax_mbp_save_sms_settings', 'mbp_ajax_save_sms_settings');
+add_action('wp_ajax_mbp_sms_test_send', 'mbp_ajax_sms_test_send');
 
         // Elementor support
         add_action('elementor/widgets/widgets_registered', array($this, 'register_elementor_widgets'));
         add_action('elementor/elements/categories_registered', array($this, 'add_elementor_widget_categories'));
+
+
         require_once MBP_PLUGIN_DIR . 'includes/class-mbp-invoice.php';
 
         // ✅ خیلی مهم: این new باعث میشه هوک‌های Invoice فعال بشن
@@ -1120,675 +1131,316 @@ JS;
     // =========================
     // در کلاس MBP_Core، متد ajax_get_services رو آپدیت می‌کنیم:
 
-    public function ajax_get_services()
-    {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => 'دسترسی ندارید'));
-        }
+public function ajax_get_services() {
+    // دسترسی
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('message' => 'دسترسی ندارید'), 403);
+    }
 
-        global $wpdb;
-        $table = $wpdb->prefix . 'mbp_services';
-        $services = $wpdb->get_results("SELECT * FROM $table ORDER BY id DESC");
+    // nonce
+    $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+    if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) {
+        wp_send_json_error(array('message' => 'Nonce نامعتبر است'), 403);
+    }
 
-        // دریافت تنظیمات SMS
+    global $wpdb;
+
+    // ========= خدمات =========
+    $services_table = $wpdb->prefix . 'mbp_services';
+    $services_table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $services_table));
+    $services = array();
+
+    if ($services_table_exists) {
+        $services = $wpdb->get_results("SELECT * FROM {$services_table} ORDER BY id DESC");
+        if (!is_array($services)) $services = array();
+    }
+
+    // ========= تنظیمات SMS (گارد برای جلوگیری از 500) =========
+    $sms_settings = null;
+    if (class_exists('MBP_SMS_Manager') && is_callable(array('MBP_SMS_Manager', 'get_settings'))) {
         $sms_settings = MBP_SMS_Manager::get_settings();
+    }
 
-        // دریافت تنظیمات پرداخت
-        $payment_settings = array(
-            'default_gateway' => get_option('mbp_default_gateway', 'zarinpal'),
-            'zarinpal_merchant_id' => get_option('mbp_zarinpal_merchant_id', ''),
-            'idpay_api_key' => get_option('mbp_idpay_api_key', ''),
-            'idpay_sandbox' => get_option('mbp_idpay_sandbox', 0),
-            'nextpay_api_key' => get_option('mbp_nextpay_api_key', '')
-        );
+    // ========= تنظیمات پرداخت =========
+    $payment_settings = array(
+        'default_gateway'      => get_option('mbp_default_gateway', 'zarinpal'),
+        'zarinpal_merchant_id' => get_option('mbp_zarinpal_merchant_id', ''),
+        'idpay_api_key'        => get_option('mbp_idpay_api_key', ''),
+        'idpay_sandbox'        => (int) get_option('mbp_idpay_sandbox', 0),
+        'nextpay_api_key'      => get_option('mbp_nextpay_api_key', '')
+    );
 
-        ob_start();
-        ?>
-        <div style="max-width:1200px;">
+    // ========= دفترچه تلفن =========
+    $phonebook_table = $wpdb->prefix . 'mbp_phonebook';
+    $phonebook_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $phonebook_table));
+    $phonebook_rows = array();
 
-            <!-- تب‌های تنظیمات -->
-            <div style="margin-bottom:20px;border-bottom:1.5px solid #424242ff;">
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                    <button type="button" class="button mbp-settings-tab active" data-tab="services">
-                        مدیریت خدمات
-                    </button>
-                    <button type="button" class="button mbp-settings-tab" data-tab="sms">
-                        تنظیمات پیامک
-                    </button>
-                    <button type="button" class="button mbp-settings-tab" data-tab="payment">
-                        تنظیمات درگاه پرداخت
-                    </button>
-                    <button type="button" class="button mbp-settings-tab" data-tab="general">
-                        تنظیمات عمومی
+    if ($phonebook_exists) {
+        $phonebook_rows = $wpdb->get_results("SELECT name, phone FROM {$phonebook_table} ORDER BY id DESC");
+        if (!is_array($phonebook_rows)) $phonebook_rows = array();
+    }
+
+    ob_start();
+    ?>
+    <div style="max-width:1200px;">
+
+        <!-- تب‌های تنظیمات -->
+        <div style="margin-bottom:20px;border-bottom:1.5px solid #424242ff;">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <button type="button" class="button mbp-settings-tab active" data-tab="services">مدیریت خدمات</button>
+                <button type="button" class="button mbp-settings-tab" data-tab="sms">تنظیمات پیامک</button>
+                <!-- <button type="button" class="button mbp-settings-tab" data-tab="payment">تنظیمات درگاه پرداخت</button> -->
+                <button type="button" class="button mbp-settings-tab" data-tab="general">تنظیمات عمومی</button>
+            </div>
+        </div>
+
+        <!-- محتوای تب‌ها -->
+        <div id="mbp-services-tab-content">
+
+            <!-- تب خدمات -->
+            <div class="mbp-tab-pane active" id="tab-services">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                    <h3 style="margin:0;">مدیریت خدمات</h3>
+                    <button type="button" id="mbp-add-service" class="button button-primary" style="font-weight:800;">
+                        + افزودن خدمت جدید
                     </button>
                 </div>
-            </div>
 
-            <!-- محتوای تب‌ها -->
-            <div id="mbp-services-tab-content">
-
-                <!-- تب خدمات -->
-                <div class="mbp-tab-pane active" id="tab-services">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-                        <h3 style="margin:0;">مدیریت خدمات</h3>
-                        <button type="button" id="mbp-add-service" class="button button-primary" style="font-weight:800;">
-                            + افزودن خدمت جدید
-                        </button>
+                <?php if (!$services_table_exists): ?>
+                    <div style="padding:14px;border-radius:12px;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.10);color:#fecaca;margin-bottom:12px;">
+                        ⚠️ جدول خدمات (<code><?php echo esc_html($services_table); ?></code>) در دیتابیس وجود ندارد.
                     </div>
+                <?php endif; ?>
 
-                    <table class="wp-list-table widefat fixed striped">
-                        <thead>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th width="50">ID</th>
+                            <th>نام خدمت</th>
+                            <th>توضیحات</th>
+                            <th width="100">مدت زمان (دقیقه)</th>
+                            <th width="120">قیمت (تومان)</th>
+                            <th width="100">وضعیت</th>
+                            <th width="150">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($services)): ?>
                             <tr>
-                                <th width="50">ID</th>
-                                <th>نام خدمت</th>
-                                <th>توضیحات</th>
-                                <th width="100">مدت زمان (دقیقه)</th>
-                                <th width="120">قیمت (تومان)</th>
-                                <th width="100">وضعیت</th>
-                                <th width="150">عملیات</th>
+                                <td colspan="7" style="text-align:center;padding:20px;">هیچ خدمتی تعریف نشده است.</td>
                             </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (empty($services)): ?>
-                                <tr>
-                                    <td colspan="7" style="text-align:center;padding:20px;">
-                                        هیچ خدمتی تعریف نشده است.
+                        <?php else: ?>
+                            <?php foreach ($services as $service): ?>
+                                <tr data-service-id="<?php echo esc_attr($service->id); ?>">
+                                    <td><?php echo esc_html($service->id); ?></td>
+                                    <td><strong><?php echo esc_html($service->name); ?></strong></td>
+                                    <td><?php echo esc_html($service->description); ?></td>
+                                    <td><?php echo esc_html($service->duration); ?></td>
+                                    <td><?php echo esc_html(number_format((float) $service->price)); ?></td>
+                                    <td>
+                                        <span class="service-status <?php echo !empty($service->is_active) ? 'active' : 'inactive'; ?>">
+                                            <?php echo !empty($service->is_active) ? 'فعال' : 'غیرفعال'; ?>
+                                        </span>
+                                    </td>
+                                    <td style="width: 300px; display: flex; gap: 10px;">
+                                        <button type="button" class="button button-small button-primary mbp-edit-service" data-id="<?php echo esc_attr($service->id); ?>">ویرایش</button>
+                                        <button type="button" class="button button-small button-primary mbp-toggle-service"
+                                            data-id="<?php echo esc_attr($service->id); ?>"
+                                            data-status="<?php echo !empty($service->is_active) ? 1 : 0; ?>">
+                                            <?php echo !empty($service->is_active) ? 'غیرفعال' : 'فعال'; ?>
+                                        </button>
+                                        <button type="button" class="button button-small button-primary button-link-delete mbp-delete-service" data-id="<?php echo esc_attr($service->id); ?>">حذف</button>
                                     </td>
                                 </tr>
-                            <?php else: ?>
-                                <?php foreach ($services as $service): ?>
-                                    <tr data-service-id="<?php echo esc_attr($service->id); ?>">
-                                        <td><?php echo esc_html($service->id); ?></td>
-                                        <td>
-                                            <strong><?php echo esc_html($service->name); ?></strong>
-                                        </td>
-                                        <td><?php echo esc_html($service->description); ?></td>
-                                        <td><?php echo esc_html($service->duration); ?></td>
-                                        <td>
-                                            <?php echo number_format($service->price); ?>
-                                        </td>
-                                        <td>
-                                            <span class="service-status <?php echo $service->is_active ? 'active' : 'inactive'; ?>">
-                                                <?php echo $service->is_active ? 'فعال' : 'غیرفعال'; ?>
-                                            </span>
-                                        </td>
-                                        <td style="width: 300px; display: flex; gap: 10px;">
-                                            <button type="button" class="button button-small button-primary mbp-edit-service"
-                                                data-id="<?php echo esc_attr($service->id); ?>">
-                                                ویرایش
-                                            </button>
-                                            <button type="button" class="button button-small button-primary mbp-toggle-service"
-                                                data-id="<?php echo esc_attr($service->id); ?>"
-                                                data-status="<?php echo $service->is_active; ?>">
-                                                <?php echo $service->is_active ? 'غیرفعال' : 'فعال'; ?>
-                                            </button>
-                                            <button type="button"
-                                                class="button button-small button-primary button-link-delete mbp-delete-service"
-                                                data-id="<?php echo esc_attr($service->id); ?>">
-                                                حذف
-                                            </button>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- تب تنظیمات پیامک -->
-                <div class="mbp-tab-pane" id="tab-sms">
-                    <div style="max-width:800px;">
-                        <h3 style="margin-top:0;">مدیریت اطلاع‌رسانی و مخاطبین</h3>
-
-                        <div
-                            style="background:rgba(255, 255, 255, .06); border:1px solid rgba(75, 75, 75, 0.8); border-radius:10px; padding:20px; margin-bottom:20px;">
-                            <h4 style="margin-top:0; color:#fff;">دفترچه تلفن (مشتریان اخیر)</h4>
-                            <div style="max-height: 250px; overflow-y: auto;">
-                                <table class="wp-list-table widefat fixed striped">
-                                    <thead>
-                                        <tr>
-                                            <th>نام مشتری</th>
-                                            <th>شماره موبایل</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php
-                                        global $wpdb;
-                                        $table_name = $wpdb->prefix . 'mbp_phonebook';
-
-                                        // چک کردن اینکه آیا جدول اصلاً وجود دارد؟
-                                        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
-
-                                        if (!$table_exists) {
-                                            echo '<tr><td colspan="2" style="color:red;">خطا: جدول mbp_phonebook در دیتابیس یافت نشد!</td></tr>';
-                                        } else {
-                                            $results = $wpdb->get_results("SELECT name, phone FROM $table_name ORDER BY id DESC");
-
-                                            if (!empty($results)) {
-                                                foreach ($results as $row): ?>
-                                                    <tr>
-                                                        <td><?php echo esc_html($row->name); ?></td>
-                                                        <td><?php echo esc_html($row->phone); ?></td>
-                                                    </tr>
-                                                <?php endforeach;
-                                            } else {
-                                                echo '<tr><td colspan="2" style="text-align:center;">دفترچه تلفن خالی است. (هنوز شماره‌ای ثبت نشده)</td></tr>';
-                                            }
-
-                                        }
-
-                                        ?>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div
-                            style="background:rgba(255, 255, 255, .06); border:1px solid rgba(75, 75, 75, 0.8); border-radius:10px; padding:20px;">
-                            <h4 style="margin-top:0; color:#fff;">ارسال پیامک گروهی</h4>
-                            <div style="margin-bottom:15px;">
-                                <label style="display:block; margin-bottom:5px;">متن پیامک برای همه مخاطبین:</label>
-                                <textarea id="mass-sms-text" rows="5"
-                                    style="width:100%; background:rgba(0,0,0,0.2); color:#fff; border:1px solid #555; border-radius:5px; padding:10px;"
-                                    placeholder="پیام خود را اینجا بنویسید..."></textarea>
-                            </div>
-                            <button type="button" id="mbp-send-mass-sms" class="button button-primary"
-                                style="background:#2271b1 !important;">
-                                <span class="dashicons dashicons-paper-plane" style="vertical-align: middle;"></span>
-                                ارسال به تمام شماره‌ها
-                            </button>
-                            <span id="mass-sms-status" style="margin-right:15px; font-size:12px;"></span>
-                        </div>
-                    </div>
-                </div>
-                <!-- تب تنظیمات درگاه پرداخت -->
-                <div class="mbp-tab-pane" id="tab-payment">
-                    <div style="max-width:600px;">
-                        <h3 style="margin-top:0;">تنظیمات درگاه پرداخت</h3>
-
-                        <form id="mbp-payment-settings-form">
-
-                            <div
-                                style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
-                                <h4 style="margin-top:0;">تنظیمات زرین‌پال</h4>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:block;margin-bottom:5px;">مرچنت کد (Merchant
-                                        ID)</label>
-                                    <input type="text" id="mbp-zarinpal-merchant-id" name="zarinpal_merchant_id"
-                                        value="<?php echo esc_attr($payment_settings['zarinpal_merchant_id']); ?>"
-                                        class="regular-text" style="width:100%;"
-                                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-                                    <p style="font-size:12px;color:#6b7280;margin-top:5px;">
-                                        Merchant ID را از پنل زرین‌پال دریافت کنید
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div
-                                style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
-                                <h4 style="margin-top:0;">تنظیمات آیدی پی</h4>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:block;margin-bottom:5px;">API Key</label>
-                                    <input type="text" id="mbp-idpay-api-key" name="idpay_api_key"
-                                        value="<?php echo esc_attr($payment_settings['idpay_api_key']); ?>" class="regular-text"
-                                        style="width:100%;" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-                                </div>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-                                        <input type="checkbox" id="mbp-idpay-sandbox" name="idpay_sandbox" value="1" <?php checked($payment_settings['idpay_sandbox'], 1); ?>>
-                                        حالت تست (Sandbox)
-                                    </label>
-                                    <p style="font-size:12px;color:#6b7280;margin-top:5px;margin-right:24px;">
-                                        در حالت تست، پرداخت‌ها واقعی نیستند
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div
-                                style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
-                                <h4 style="margin-top:0;">تنظیمات نکست پی</h4>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:block;margin-bottom:5px;">API Key</label>
-                                    <input type="text" id="mbp-nextpay-api-key" name="nextpay_api_key"
-                                        value="<?php echo esc_attr($payment_settings['nextpay_api_key']); ?>"
-                                        class="regular-text" style="width:100%;">
-                                </div>
-                            </div>
-
-                            <div style="margin-top:20px;">
-                                <button type="submit" class="button button-primary" id="mbp-payment-save">
-                                    ذخیره تنظیمات درگاه
-                                </button>
-                                <span id="mbp-payment-message" style="margin-right:15px;font-size:12px;"></span>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <!-- تب تنظیمات عمومی -->
-                <div class="mbp-tab-pane" id="tab-general">
-                    <div style="max-width:600px;">
-                        <h3 style="margin-top:0;">تنظیمات عمومی</h3>
-
-                        <form id="mbp-general-settings-form">
-                            <div
-                                style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
-                                <h4 style="margin-top:0;">تنظیمات رزرو</h4>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:block;margin-bottom:5px;">زمان تأیید خودکار
-                                        (ساعت)</label>
-                                    <input type="number" id="mbp-auto-approve-hours" name="auto_approve_hours"
-                                        value="<?php echo esc_attr(get_option('mbp_auto_approve_hours', 0)); ?>"
-                                        class="regular-text" style="width:100px;">
-                                    <p style="font-size:12px;color:#6b7280;margin-top:5px;">
-                                        اگر عددی بیشتر از 0 وارد کنید، رزروها بعد از این مدت به صورت خودکار تأیید می‌شوند (0 =
-                                        غیرفعال)
-                                    </p>
-                                </div>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:block;margin-bottom:5px;">زمان لغو خودکار
-                                        (ساعت)</label>
-                                    <input type="number" id="mbp-auto-cancel-hours" name="auto_cancel_hours"
-                                        value="<?php echo esc_attr(get_option('mbp_auto_cancel_hours', 0)); ?>"
-                                        class="regular-text" style="width:100px;">
-                                    <p style="font-size:12px;color:#6b7280;margin-top:5px;">
-                                        رزروهای پرداخت نشده بعد از این مدت لغو می‌شوند (0 = غیرفعال)
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div
-                                style="background:rgba(255, 255, 255, .06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
-                                <h4 style="margin-top:0;">تنظیمات نمایش</h4>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:block;margin-bottom:5px;">تعداد روزهای قابل رزرو در
-                                        آینده</label>
-                                    <input type="number" id="mbp-future-days-limit" name="future_days_limit"
-                                        value="<?php echo esc_attr(get_option('mbp_future_days_limit', 30)); ?>"
-                                        class="regular-text" style="width:100px;" min="1" max="365">
-                                    <p style="font-size:12px;color:#6b7280;margin-top:5px;">
-                                        کاربران فقط می‌توانند تا این تعداد روز در آینده رزرو کنند
-                                    </p>
-                                </div>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-                                        <input type="checkbox" id="mbp-show-calendar" name="show_calendar" value="1" <?php checked(get_option('mbp_show_calendar', 1), 1); ?>>
-                                        نمایش تقویم در فرم رزرو
-                                    </label>
-                                </div>
-
-                                <div style="margin-bottom:15px;">
-                                    <label style="font-weight:800;display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-                                        <input type="checkbox" id="mbp-require-login" name="require_login" value="1" <?php checked(get_option('mbp_require_login', 0), 1); ?>>
-                                        نیاز به ورود برای رزرو
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div style="margin-top:20px;">
-                                <button type="submit" class="button button-primary" id="mbp-general-save">
-                                    ذخیره تنظیمات عمومی
-                                </button>
-                                <span id="mbp-general-message" style="margin-right:15px;font-size:12px;"></span>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
 
-            <!-- Modal برای افزودن/ویرایش خدمت -->
-            <div id="mbp-service-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;">
-                <div
-                    style="width:min(520px,92vw);margin:10vh auto;background:#fff;border-radius:14px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25);">
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:20px;">
-                        <div style="font-weight:900;font-size:16px;" id="mbp-service-modal-title">افزودن خدمت جدید</div>
-                        <button type="button" class="button" id="mbp-service-modal-close">بستن</button>
+            <!-- تب تنظیمات پیامک -->
+            <div class="mbp-tab-pane" id="tab-sms">
+                <div style="max-width:800px;">
+                    <h3 style="margin-top:0;">مدیریت اطلاع‌رسانی و مخاطبین</h3>
+
+                    <?php if (!class_exists('MBP_SMS_Manager')): ?>
+                        <div style="padding:14px;border-radius:12px;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.10);color:#fecaca;margin-bottom:12px;">
+                            ⚠️ کلاس <code>MBP_SMS_Manager</code> لود نشده. فایلش را include/require کن تا بخش پیامک بدون خطا کار کند.
+                        </div>
+                    <?php endif; ?>
+
+                    <div style="background:rgba(255,255,255,.06); border:1px solid rgba(75,75,75,.8); border-radius:10px; padding:20px; margin-bottom:20px;">
+                        <h4 style="margin-top:0; color:#fff;">دفترچه تلفن (مشتریان اخیر)</h4>
+
+                        <div style="max-height: 250px; overflow-y: auto;">
+                            <table class="wp-list-table widefat fixed striped">
+                                <thead>
+                                    <tr>
+                                        <th>نام مشتری</th>
+                                        <th>شماره موبایل</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (!$phonebook_exists): ?>
+                                        <tr><td colspan="2" style="color:#ef4444;">خطا: جدول دفترچه تلفن یافت نشد!</td></tr>
+                                    <?php elseif (empty($phonebook_rows)): ?>
+                                        <tr><td colspan="2" style="text-align:center;">دفترچه تلفن خالی است. (هنوز شماره‌ای ثبت نشده)</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($phonebook_rows as $row): ?>
+                                            <tr>
+                                                <td><?php echo esc_html($row->name); ?></td>
+                                                <td><?php echo esc_html($row->phone); ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
-                    <form id="mbp-service-form">
-                        <input type="hidden" id="mbp-service-id" name="id" value="">
+                    <div style="background:rgba(255,255,255,.06); border:1px solid rgba(75,75,75,.8); border-radius:10px; padding:20px;">
+                        <h4 style="margin-top:0; color:#fff;">ارسال پیامک گروهی</h4>
 
                         <div style="margin-bottom:15px;">
-                            <label style="font-weight:800;display:block;margin-bottom:5px;">نام خدمت *</label>
-                            <input type="text" id="mbp-service-name" name="name" class="regular-text" style="width:100%;"
-                                required>
+                            <label style="display:block; margin-bottom:5px;">متن پیامک برای همه مخاطبین:</label>
+                            <textarea id="mass-sms-text" rows="5"
+                                style="width:100%; background:rgba(0,0,0,0.2); color:#fff; border:1px solid #555; border-radius:5px; padding:10px;"
+                                placeholder="پیام خود را اینجا بنویسید..."></textarea>
                         </div>
 
-                        <div style="margin-bottom:15px;">
-                            <label style="font-weight:800;display:block;margin-bottom:5px;">توضیحات</label>
-                            <textarea id="mbp-service-description" name="description" class="regular-text"
-                                style="width:100%;height:80px;"></textarea>
-                        </div>
+                        <button type="button" id="mbp-send-mass-sms" class="button button-primary" style="background:#2271b1 !important;">
+                            ارسال به تمام شماره‌ها
+                        </button>
+                        <span id="mass-sms-status" style="margin-right:15px; font-size:12px;"></span>
+                    </div>
+                </div>
+            </div>
 
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                            <div>
-                                <label style="font-weight:800;display:block;margin-bottom:5px;">مدت زمان (دقیقه)</label>
-                                <input type="number" id="mbp-service-duration" name="duration" class="regular-text"
-                                    style="width:100%;" value="30" min="5" step="5">
+            <!-- تب پرداخت -->
+            <div class="mbp-tab-pane" id="tab-payment">
+                <div style="max-width:600px;">
+                    <h3 style="margin-top:0;">تنظیمات درگاه پرداخت</h3>
+
+                    <form id="mbp-payment-settings-form">
+                        <div style="background:rgba(255,255,255,.06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
+                            <h4 style="margin-top:0;">تنظیمات زرین‌پال</h4>
+                            <div style="margin-bottom:15px;">
+                                <label style="font-weight:800;display:block;margin-bottom:5px;">مرچنت کد (Merchant ID)</label>
+                                <input type="text" id="mbp-zarinpal-merchant-id" name="zarinpal_merchant_id"
+                                    value="<?php echo esc_attr($payment_settings['zarinpal_merchant_id']); ?>"
+                                    class="regular-text" style="width:100%;"
+                                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
                             </div>
-                            <div>
-                                <label style="font-weight:800;display:block;margin-bottom:5px;">قیمت (تومان)</label>
-                                <input type="number" id="mbp-service-price" name="price" class="regular-text"
-                                    style="width:100%;" value="0" min="0" step="1000">
-                            </div>
                         </div>
 
-                        <div style="display:flex;gap:10px;align-items:center;margin-top:20px;">
-                            <button type="submit" class="button button-primary" id="mbp-service-submit">ذخیره</button>
-                            <button type="button" class="button" id="mbp-service-cancel">انصراف</button>
-                            <span id="mbp-service-message" style="font-size:12px;color:#6b7280;"></span>
+                        <div style="margin-top:20px;">
+                            <button type="submit" class="button button-primary" id="mbp-payment-save">ذخیره تنظیمات درگاه</button>
+                            <span id="mbp-payment-message" style="margin-right:15px;font-size:12px;"></span>
                         </div>
                     </form>
                 </div>
             </div>
+
+            <!-- تب عمومی -->
+            <div class="mbp-tab-pane" id="tab-general">
+                <div style="max-width:600px;">
+                    <h3 style="margin-top:0;">تنظیمات عمومی</h3>
+
+                    <form id="mbp-general-settings-form">
+                        <div style="background:rgba(255,255,255,.06);border:1px solid #5f5f5fad;border-radius:10px;padding:20px">
+                            <h4 style="margin-top:0;">تنظیمات رزرو</h4>
+
+                            <div style="margin-bottom:15px;">
+                                <label style="font-weight:800;display:block;margin-bottom:5px;">زمان تأیید خودکار (ساعت)</label>
+                                <input type="number" id="mbp-auto-approve-hours" name="auto_approve_hours"
+                                    value="<?php echo esc_attr(get_option('mbp_auto_approve_hours', 0)); ?>"
+                                    class="regular-text" style="width:100px;">
+                            </div>
+                        </div>
+
+                        <div style="margin-top:20px;">
+                            <button type="submit" class="button button-primary" id="mbp-general-save">ذخیره تنظیمات عمومی</button>
+                            <span id="mbp-general-message" style="margin-right:15px;font-size:12px;"></span>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
         </div>
 
-        <style>
-            .mbp-tab-pane {
-                display: none;
-            }
+        <!-- Modal خدمت -->
+        <div id="mbp-service-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;">
+            <div style="width:min(520px,92vw);margin:10vh auto;background:#fff;border-radius:14px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25);">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:20px;">
+                    <div style="font-weight:900;font-size:16px;" id="mbp-service-modal-title">افزودن خدمت جدید</div>
+                    <button type="button" class="button" id="mbp-service-modal-close">بستن</button>
+                </div>
 
-            .mbp-tab-pane.active {
-                display: flex;
-                flex-direction: column;
-                gap: 20px;
-            }
+                <form id="mbp-service-form">
+                    <input type="hidden" id="mbp-service-id" name="id" value="">
+                    <div style="margin-bottom:15px;">
+                        <label style="font-weight:800;display:block;margin-bottom:5px;">نام خدمت *</label>
+                        <input type="text" id="mbp-service-name" name="name" class="regular-text" style="width:100%;" required>
+                    </div>
 
-            .button-primary {
-                padding: 10px;
-                border-radius: 10px;
-                background: rgba(255, 255, 255, .06);
-                border: 1px solid rgba(255, 255, 255, .12);
-                color: #ccccccff;
-                font-family: inherit;
-                cursor: pointer;
-                transition: all 0.5s;
-            }
+                    <div style="margin-bottom:15px;">
+                        <label style="font-weight:800;display:block;margin-bottom:5px;">توضیحات</label>
+                        <textarea id="mbp-service-description" name="description" class="regular-text" style="width:100%;height:80px;"></textarea>
+                    </div>
 
-            .button-primary:hover {
-                background: #2271b1;
-                color: white;
-                border-color: #2271b1;
-            }
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                        <div>
+                            <label style="font-weight:800;display:block;margin-bottom:5px;">مدت زمان (دقیقه)</label>
+                            <input type="number" id="mbp-service-duration" name="duration" class="regular-text" style="width:100%;" value="30" min="5" step="5">
+                        </div>
+                        <div>
+                            <label style="font-weight:800;display:block;margin-bottom:5px;">قیمت (تومان)</label>
+                            <input type="number" id="mbp-service-price" name="price" class="regular-text" style="width:100%;" value="0" min="0" step="1000">
+                        </div>
+                    </div>
 
-            .mbp-settings-tab {
-                padding: 10px;
-                border-radius: 10px 10px 0 0;
-                background: rgba(255, 255, 255, .06);
-                border: 1px solid rgba(255, 255, 255, .12);
-                color: #ccccccff;
-                font-family: inherit;
-                cursor: pointer;
-            }
+                    <div style="display:flex;gap:10px;align-items:center;margin-top:20px;">
+                        <button type="submit" class="button button-primary" id="mbp-service-submit">ذخیره</button>
+                        <button type="button" class="button" id="mbp-service-cancel">انصراف</button>
+                        <span id="mbp-service-message" style="font-size:12px;color:#6b7280;"></span>
+                    </div>
+                </form>
+            </div>
+        </div>
 
-            .mbp-settings-tab.active {
-                background: #2271b1;
-                color: white;
-                border-color: #2271b1;
-            }
+    </div>
 
-            .service-status {
-                padding: 4px 12px;
-                border-radius: 20px;
-                font-size: 12px;
-                font-weight: 700;
-            }
+    <style>
+        .mbp-tab-pane{display:none}
+        .mbp-tab-pane.active{display:flex;flex-direction:column;gap:20px}
 
-            .service-status.active {
-                background: rgba(34, 197, 94, .2);
-                color: #22c55e;
-            }
+        .button-primary{
+            padding:10px;border-radius:10px;background:rgba(255,255,255,.06);
+            border:1px solid rgba(255,255,255,.12);color:#ccccccff;font-family:inherit;cursor:pointer;transition:all .2s
+        }
+        .button-primary:hover{background:#2271b1;color:#fff;border-color:#2271b1}
 
-            .service-status.inactive {
-                background: rgba(239, 68, 68, .2);
-                color: #ef4444;
-            }
+        .mbp-settings-tab{
+            padding:10px;border-radius:10px 10px 0 0;background:rgba(255,255,255,.06);
+            border:1px solid rgba(255,255,255,.12);color:#ccccccff;font-family:inherit;cursor:pointer
+        }
+        .mbp-settings-tab.active{background:#2271b1;color:#fff;border-color:#2271b1}
 
-            .regular-text {
-                padding: 10px;
-                width: 300px;
-                border-radius: 10px;
-                background: rgba(0, 0, 0, 0.2);
-                color: #fff;
-                border: 1px solid #555;
-            }
+        .service-status{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700}
+        .service-status.active{background:rgba(34,197,94,.2);color:#22c55e}
+        .service-status.inactive{background:rgba(239,68,68,.2);color:#ef4444}
 
-            .regular-text:focus {
-                outline: 1px solid #0084ffff;
-            }
-        </style>
+        .regular-text{
+            padding:10px;border-radius:10px;background:rgba(0,0,0,.2);color:#fff;border:1px solid #555
+        }
+        .regular-text:focus{outline:1px solid #0084ffff}
+    </style>
+    <?php
 
-        <script>
-            jQuery(function ($) {
-                const nonce = '<?php echo wp_create_nonce("mbp_admin_action_nonce"); ?>';
+    $html = ob_get_clean();
+    wp_send_json_success(array('html' => $html));
+}
 
-                // مدیریت تب‌ها
-                $('.mbp-settings-tab').on('click', function () {
-                    const tab = $(this).data('tab');
-
-                    // آپدیت دکمه‌های تب
-                    $('.mbp-settings-tab').removeClass('active');
-                    $(this).addClass('active');
-
-                    // آپدیت محتوا
-                    $('.mbp-tab-pane').removeClass('active');
-                    $('#tab-' + tab).addClass('active');
-                });
-
-                // مدیریت خدمات
-                // باز کردن مدال برای افزودن خدمت
-                $('#mbp-add-service').on('click', function () {
-                    $('#mbp-service-modal-title').text('افزودن خدمت جدید');
-                    $('#mbp-service-form')[0].reset();
-                    $('#mbp-service-id').val('');
-                    $('#mbp-service-modal').show();
-                });
-
-                // ویرایش خدمت
-                $(document).on('click', '.mbp-edit-service', function () {
-                    const serviceId = $(this).data('id');
-                    const row = $(this).closest('tr');
-
-                    $('#mbp-service-modal-title').text('ویرایش خدمت');
-                    $('#mbp-service-id').val(serviceId);
-                    $('#mbp-service-name').val(row.find('td:nth-child(2) strong').text());
-                    $('#mbp-service-description').val(row.find('td:nth-child(3)').text());
-                    $('#mbp-service-duration').val(row.find('td:nth-child(4)').text());
-                    $('#mbp-service-price').val(row.find('td:nth-child(5)').text().replace(/,/g, ''));
-
-                    $('#mbp-service-modal').show();
-                });
-
-                // بستن مدال
-                $('#mbp-service-modal-close, #mbp-service-cancel').on('click', function () {
-                    $('#mbp-service-modal').hide();
-                });
-
-                // ارسال پیامک گروهی
-                $(document).on('click', '#mbp-send-mass-sms', function () {
-                    const message = $('#mass-sms-text').val();
-                    const btn = $(this);
-                    const status = $('#mass-sms-status');
-
-                    if (!message) {
-                        alert('لطفاً متن پیام را وارد کنید');
-                        return;
-                    }
-
-                    if (!confirm('آیا مطمئن هستید که می‌خواهید این پیام را برای تمام مخاطبین لیست ارسال کنید؟')) {
-                        return;
-                    }
-
-                    btn.prop('disabled', true).text('در حال ارسال...');
-
-                    $.post(ajaxurl, {
-                        action: 'mbp_send_mass_sms',
-                        message: message,
-                        nonce: nonce
-                    }, function (response) {
-                        if (response.success) {
-                            status.text('ارسال با موفقیت انجام شد').css('color', '#10b981');
-                            $('#mass-sms-text').val('');
-                        } else {
-                            status.text('خطا در ارسال').css('color', '#ef4444');
-                        }
-                    }).always(function () {
-                        btn.prop('disabled', false).html('<span class="dashicons dashicons-paper-plane"></span> ارسال به تمام شماره‌ها');
-                    });
-                });
-
-                // ارسال فرم خدمت
-                $('#mbp-service-form').on('submit', function (e) {
-                    e.preventDefault();
-
-                    const submitBtn = $('#mbp-service-submit');
-                    const originalText = submitBtn.text();
-                    const messageEl = $('#mbp-service-message');
-
-                    submitBtn.prop('disabled', true);
-                    submitBtn.text('در حال ذخیره...');
-                    messageEl.text('');
-
-                    const formData = $(this).serialize() + '&action=mbp_save_service&nonce=' + nonce;
-
-                    $.post(ajaxurl, formData, function (response) {
-                        if (response.success) {
-                            messageEl.text('خدمت با موفقیت ذخیره شد').css('color', '#10b981');
-                            setTimeout(function () {
-                                $('#mbp-service-modal').hide();
-                                // رفرش تب خدمات
-                                $('.mbp-settings-tab[data-tab="services"]').click();
-                            }, 1000);
-                        } else {
-                            messageEl.text(response.data.message || 'خطا در ذخیره').css('color', '#ef4444');
-                        }
-                    }).fail(function () {
-                        messageEl.text('خطا در ارتباط با سرور').css('color', '#ef4444');
-                    }).always(function () {
-                        submitBtn.prop('disabled', false);
-                        submitBtn.text(originalText);
-                    });
-                });
-
-                // فعال/غیرفعال کردن خدمت
-                $(document).on('click', '.mbp-toggle-service', function () {
-                    const serviceId = $(this).data('id');
-                    const currentStatus = $(this).data('status');
-                    const button = $(this);
-
-                    $.post(ajaxurl, {
-                        action: 'mbp_toggle_service',
-                        id: serviceId,
-                        nonce: nonce
-                    }, function (response) {
-                        if (response.success) {
-                            const newStatus = response.data.new_status;
-                            button.data('status', newStatus);
-                            button.text(newStatus ? 'غیرفعال' : 'فعال');
-
-                            const statusSpan = button.closest('tr').find('.service-status');
-                            statusSpan.removeClass('active inactive').addClass(newStatus ? 'active' : 'inactive');
-                            statusSpan.text(newStatus ? 'فعال' : 'غیرفعال');
-                        }
-                    });
-                });
-
-                // حذف خدمت
-                $(document).on('click', '.mbp-delete-service', function () {
-                    if (!confirm('آیا از حذف این خدمت مطمئن هستید؟')) return;
-
-                    const serviceId = $(this).data('id');
-                    const button = $(this);
-
-                    $.post(ajaxurl, {
-                        action: 'mbp_delete_service',
-                        id: serviceId,
-                        nonce: nonce
-                    }, function (response) {
-                        if (response.success) {
-                            button.closest('tr').fadeOut(300, function () {
-                                $(this).remove();
-                            });
-                        }
-                    });
-                });
-
-                // ذخیره تنظیمات پیامک
-
-                // تست پیامک
-
-
-                // ذخیره تنظیمات درگاه پرداخت
-                $('#mbp-payment-settings-form').on('submit', function (e) {
-                    e.preventDefault();
-
-                    const submitBtn = $('#mbp-payment-save');
-                    const originalText = submitBtn.text();
-                    const messageEl = $('#mbp-payment-message');
-
-                    submitBtn.prop('disabled', true);
-                    submitBtn.text('در حال ذخیره...');
-                    messageEl.text('').css('color', '');
-
-                    const formData = $(this).serialize() + '&action=mbp_save_payment_settings&nonce=' + nonce;
-
-                    $.post(ajaxurl, formData, function (response) {
-                        if (response.success) {
-                            messageEl.text('تنظیمات با موفقیت ذخیره شد').css('color', '#10b981');
-                        } else {
-                            messageEl.text(response.data.message || 'خطا در ذخیره').css('color', '#ef4444');
-                        }
-                    }).fail(function () {
-                        messageEl.text('خطا در ارتباط با سرور').css('color', '#ef4444');
-                    }).always(function () {
-                        submitBtn.prop('disabled', false);
-                        submitBtn.text(originalText);
-                    });
-                });
-
-                // ذخیره تنظیمات عمومی
-                $('#mbp-general-settings-form').on('submit', function (e) {
-                    e.preventDefault();
-
-                    const submitBtn = $('#mbp-general-save');
-                    const originalText = submitBtn.text();
-                    const messageEl = $('#mbp-general-message');
-
-                    submitBtn.prop('disabled', true);
-                    submitBtn.text('در حال ذخیره...');
-                    messageEl.text('').css('color', '');
-
-                    const formData = $(this).serialize() + '&action=mbp_save_general_settings&nonce=' + nonce;
-
-                    $.post(ajaxurl, formData, function (response) {
-                        if (response.success) {
-                            messageEl.text('تنظیمات با موفقیت ذخیره شد').css('color', '#10b981');
-                        } else {
-                            messageEl.text(response.data.message || 'خطا در ذخیره').css('color', '#ef4444');
-                        }
-                    }).fail(function () {
-                        messageEl.text('خطا در ارتباط با سرور').css('color', '#ef4444');
-                    }).always(function () {
-                        submitBtn.prop('disabled', false);
-                        submitBtn.text(originalText);
-                    });
-                });
-            });
-        </script>
-        <?php
-
-        $html = ob_get_clean();
-        wp_send_json_success(array('html' => $html));
-    }
     // در متد enqueue_admin_assets استایل اضافه کنید:
 
     public function ajax_send_mass_sms()
@@ -2388,254 +2040,382 @@ JS;
     // =========================
     // INVOICES AJAX
     // =========================
-    public function ajax_get_invoices()
+
+    public function ajax_get_invoices() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'دسترسی ندارید']);
+    }
+
+    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
+        wp_send_json_error(['message' => 'Nonce نامعتبر است']);
+    }
+
+    $this->ensure_invoice_tables();
+
+    global $wpdb;
+    $t = $wpdb->prefix . 'mbp_invoices';
+
+    // اگر wc_order_id نداری، این ستون رو از SELECT حذف کن
+    $rows = $wpdb->get_results("SELECT * FROM {$t} ORDER BY id DESC LIMIT 200");
+
+    ob_start();
+    ?>
+    <style>
+      #mbp-view .mbp-inv-list-wrap{
+        border:1px solid rgba(255,255,255,.12);
+        background: rgba(255,255,255,.06);
+        border-radius:16px;
+        padding:14px;
+      }
+      #mbp-view .mbp-inv-cards{
+        display:grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap:12px;
+      }
+      #mbp-view .mbp-inv-card{
+        border:1px solid rgba(255,255,255,.12);
+        background: rgba(255,255,255,.05);
+        border-radius:16px;
+        padding:14px;
+        transition:.2s;
+        position:relative;
+        overflow:hidden;
+      }
+      #mbp-view .mbp-inv-card:hover{
+        transform: translateY(-3px);
+        background: rgba(255,255,255,.07);
+        border-color: rgba(59,130,246,.25);
+      }
+      #mbp-view .mbp-inv-card-head{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:10px;
+      }
+      #mbp-view .mbp-inv-title{
+        font-weight:900;
+        font-size:14px;
+        line-height:1.8;
+      }
+      #mbp-view .mbp-inv-sub{
+        opacity:.75;
+        font-size:12px;
+        margin-top:4px;
+        line-height:1.8;
+      }
+      #mbp-view .mbp-inv-amount{
+        text-align:left;
+        font-weight:900;
+        font-size:15px;
+        white-space:nowrap;
+      }
+      #mbp-view .mbp-inv-amount small{
+        display:block;
+        opacity:.7;
+        font-weight:700;
+        font-size:11px;
+        margin-top:4px;
+      }
+      #mbp-view .mbp-inv-badges{
+        display:flex;
+        gap:8px;
+        flex-wrap:wrap;
+        margin-top:10px;
+      }
+      #mbp-view .mbp-inv-badge{
+        font-size:11px;
+        font-weight:900;
+        padding:4px 10px;
+        border-radius:999px;
+        border:1px solid rgba(255,255,255,.14);
+        background: rgba(255,255,255,.06);
+        opacity:.95;
+      }
+      #mbp-view .mbp-inv-badge.paid{
+        border-color: rgba(34,197,94,.35);
+        background: rgba(34,197,94,.12);
+        color:#a7f3d0;
+      }
+      #mbp-view .mbp-inv-badge.pending{
+        border-color: rgba(245,158,11,.35);
+        background: rgba(245,158,11,.12);
+        color:#fde68a;
+      }
+      #mbp-view .mbp-inv-badge.cancelled{
+        border-color: rgba(239,68,68,.35);
+        background: rgba(239,68,68,.12);
+        color:#fecaca;
+      }
+      #mbp-view .mbp-inv-actions{
+        display:flex;
+        gap:8px;
+        margin-top:12px;
+        justify-content:flex-start;
+        flex-wrap:wrap;
+      }
+      #mbp-view .mbp-inv-empty{
+        padding:26px;
+        text-align:center;
+        color:#cbd5e1;
+        opacity:.85;
+      }
+      @media (max-width: 900px){
+        #mbp-view .mbp-inv-cards{grid-template-columns:1fr;}
+      }
+    </style>
+
+    <div class="mbp-inv-list-wrap">
+      <?php if (empty($rows)): ?>
+        <div class="mbp-inv-empty">هیچ فاکتوری ثبت نشده</div>
+      <?php else: ?>
+        <div class="mbp-inv-cards">
+          <?php foreach ($rows as $r): 
+            $id = (int) $r->id;
+
+            $customer = trim((string)($r->customer_name ?? ''));
+            $customer = $customer !== '' ? $customer : '-';
+
+            $contact = trim((string)($r->mobile ?? ''));
+            if ($contact === '') $contact = trim((string)($r->email ?? ''));
+            if ($contact === '') $contact = '-';
+
+            $created = (string)($r->created_at ?? '-');
+
+            $total = (float)($r->total ?? 0);
+
+            $status_raw = strtolower(trim((string)($r->status ?? 'created')));
+
+            // کلاس وضعیت
+            $badgeClass = 'pending';
+            if (in_array($status_raw, ['paid', 'completed', 'success'], true)) $badgeClass = 'paid';
+            elseif (in_array($status_raw, ['cancelled', 'canceled', 'failed', 'refunded'], true)) $badgeClass = 'cancelled';
+
+            // متن فارسی وضعیت
+            $statusLabel = 'ساخته شده';
+            if (in_array($status_raw, ['paid', 'completed', 'success'], true)) $statusLabel = 'پرداخت شده';
+            elseif (in_array($status_raw, ['unpaid'], true)) $statusLabel = 'پرداخت نشده';
+            elseif (in_array($status_raw, ['pending'], true)) $statusLabel = 'در انتظار';
+            elseif (in_array($status_raw, ['cancelled','canceled'], true)) $statusLabel = 'لغو شده';
+
+            $wc_order_id = !empty($r->wc_order_id) ? (int)$r->wc_order_id : 0;
+          ?>
+            <div class="mbp-inv-card">
+              <div class="mbp-inv-card-head">
+                <div>
+                  <div class="mbp-inv-title">#<?php echo esc_html($id); ?> — <?php echo esc_html($customer); ?></div>
+                  <div class="mbp-inv-sub">
+                    تاریخ: <?php echo esc_html($created); ?>
+                    <?php if ($wc_order_id): ?>
+                      <span style="margin-right:8px;opacity:.9">| سفارش ووکامرس: #<?php echo esc_html($wc_order_id); ?></span>
+                    <?php endif; ?>
+                    <div style="opacity:.8;margin-top:2px;">تماس: <?php echo esc_html($contact); ?></div>
+                  </div>
+                </div>
+
+                <div class="mbp-inv-amount">
+                  <?php echo esc_html(number_format($total)); ?> تومان
+                  <small>مبلغ نهایی</small>
+                </div>
+              </div>
+
+              <div class="mbp-inv-badges">
+                <span class="mbp-inv-badge <?php echo esc_attr($badgeClass); ?>">
+                  وضعیت: ساخته شده
+                </span>
+                <?php if ($wc_order_id): ?>
+                  <span class="mbp-inv-badge">WooCommerce</span>
+                <?php endif; ?>
+              </div>
+
+              <div class="mbp-inv-actions">
+                <a href="#" class="mbp-btn mbp-inv-print" data-id="<?php echo esc_attr($id); ?>" style="text-decoration: none;">🖨️ چاپ</a>
+                <a href="#" class="mbp-btn mbp-delete mbp-inv-del" data-id="<?php echo esc_attr($id); ?>" style="    text-decoration: none;">🗑️ حذف</a>
+              </div>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+    </div>
+    <?php
+
+    wp_send_json_success(['html' => ob_get_clean()]);
+}
+
+
+    public function ajax_delete_invoice()
     {
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => 'دسترسی ندارید'));
+            wp_send_json_error(['message' => 'دسترسی ندارید']);
         }
 
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
-            wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+        if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) {
+            wp_send_json_error(['message' => 'Nonce نامعتبر است']);
+        }
+
+        $id = isset($_POST['id']) ? absint($_POST['id']) : 0;
+        if (!$id) {
+            wp_send_json_error(['message' => 'شناسه فاکتور نامعتبر است']);
         }
 
         global $wpdb;
-        $appointments_table = $wpdb->prefix . 'mbp_appointments';
-        $services_table = $wpdb->prefix . 'mbp_services';
-        $payments_table = $wpdb->prefix . 'mbp_payments';
+        $t = $wpdb->prefix . 'mbp_invoices';
 
-        // دریافت فاکتورها (رزروهای پرداخت شده)
-        $invoices = $wpdb->get_results(
-            "SELECT a.*, s.name as service_name, s.price as service_price, p.amount as paid_amount, p.ref_id, p.created_at as payment_date
-             FROM $appointments_table a 
-             LEFT JOIN $services_table s ON a.service_id = s.id 
-             LEFT JOIN $payments_table p ON a.id = p.appointment_id AND p.status = 'completed'
-             WHERE a.payment_status = 'paid'
-             ORDER BY a.created_at DESC"
-        );
+        $deleted = $wpdb->delete($t, ['id' => $id], ['%d']);
+        if ($deleted === false) {
+            wp_send_json_error(['message' => 'خطا در حذف از دیتابیس']);
+        }
+        if ($deleted === 0) {
+            wp_send_json_error(['message' => 'فاکتور پیدا نشد']);
+        }
 
-        ob_start();
-        ?>
-        <div style="max-width:1200px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-                <h3 style="margin:0;">لیست فاکتورها</h3>
-                <div style="display:flex;gap:10px;">
-                    <button type="button" id="mbp-export-invoices" class="button" style="font-weight:800;">
-                        📊 خروجی Excel
-                    </button>
-                    <button type="button" id="mbp-create-manual-invoice" class="button button-primary" style="font-weight:800;">
-                        + ایجاد فاکتور دستی
-                    </button>
-                </div>
-            </div>
-
-            <?php if (empty($invoices)): ?>
-                <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:40px;text-align:center;">
-                    <div style="font-size:16px;color:#6b7280;margin-bottom:15px;">هیچ فاکتوری یافت نشد</div>
-                    <div style="font-size:14px;color:#9ca3af;">فاکتورها بعد از پرداخت موفق رزروها ایجاد میشوند</div>
-                </div>
-            <?php else: ?>
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-                    <table class="wp-list-table widefat fixed striped">
-                        <thead>
-                            <tr>
-                                <th width="80">شماره فاکتور</th>
-                                <th>مشتری</th>
-                                <th>خدمت</th>
-                                <th width="120">مبلغ</th>
-                                <th width="120">تاریخ پرداخت</th>
-                                <th width="100">شماره پیگیری</th>
-                                <th width="100">وضعیت</th>
-                                <th width="120">عملیات</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($invoices as $invoice): ?>
-                                <tr>
-                                    <td>
-                                        <strong>#<?php echo esc_html($invoice->id); ?></strong>
-                                    </td>
-                                    <td>
-                                        <div style="font-weight:600;"><?php echo esc_html($invoice->customer_name); ?></div>
-                                        <div style="font-size:12px;color:#6b7280;"><?php echo esc_html($invoice->customer_email); ?>
-                                        </div>
-                                        <?php if ($invoice->customer_phone): ?>
-                                            <div style="font-size:12px;color:#6b7280;"><?php echo esc_html($invoice->customer_phone); ?>
-                                            </div>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <div style="font-weight:600;"><?php echo esc_html($invoice->service_name ?: 'خدمت عمومی'); ?>
-                                        </div>
-                                        <div style="font-size:12px;color:#6b7280;">
-                                            <?php echo $this->fa_date_from_timestamp(strtotime($invoice->time), 'Y/m/d', true); ?>
-                                            -
-                                            <?php echo date('H:i', strtotime($invoice->time)); ?>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <span style="font-weight:700;color:#059669;">
-                                            <?php echo number_format($invoice->paid_amount ?: $invoice->service_price); ?> تومان
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <?php if ($invoice->payment_date): ?>
-                                            <?php echo $this->fa_date_from_timestamp(strtotime($invoice->payment_date), 'Y/m/d H:i', true); ?>
-                                        <?php else: ?>
-                                            <span style="color:#6b7280;">-</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <?php if ($invoice->ref_id): ?>
-                                            <code style="font-size:11px;"><?php echo esc_html($invoice->ref_id); ?></code>
-                                        <?php else: ?>
-                                            <span style="color:#6b7280;">-</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <span class="invoice-status paid"
-                                            style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(34,197,94,.2);color:#22c55e;">
-                                            پرداخت شده
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <div style="display:flex;gap:5px;flex-wrap:wrap;">
-                                            <button type="button" class="button button-small mbp-view-invoice"
-                                                data-id="<?php echo esc_attr($invoice->id); ?>" title="مشاهده فاکتور">
-                                                👁️
-                                            </button>
-                                            <button type="button" class="button button-small mbp-print-invoice"
-                                                data-id="<?php echo esc_attr($invoice->id); ?>" title="چاپ فاکتور">
-                                                🖨️
-                                            </button>
-                                            <button type="button" class="button button-small mbp-send-invoice"
-                                                data-id="<?php echo esc_attr($invoice->id); ?>" title="ارسال ایمیل">
-                                                📧
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-
-                <div style="margin-top:20px;padding:15px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;">
-                        <div style="font-size:14px;color:#6b7280;">
-                            مجموع <?php echo count($invoices); ?> فاکتور
-                        </div>
-                        <div style="font-size:16px;font-weight:700;color:#059669;">
-                            کل درآمد: <?php
-                            $total_income = array_sum(array_map(function ($inv) {
-                                return $inv->paid_amount ?: $inv->service_price;
-                            }, $invoices));
-                            echo number_format($total_income);
-                            ?> تومان
-                        </div>
-                    </div>
-                </div>
-            <?php endif; ?>
-        </div>
-
-        <!-- Modal برای مشاهده فاکتور -->
-        <div id="mbp-invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;">
-            <div
-                style="width:min(800px,92vw);margin:5vh auto;background:#fff;border-radius:14px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25);max-height:90vh;overflow-y:auto;">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:20px;">
-                    <div style="font-weight:900;font-size:16px;" id="mbp-invoice-modal-title">مشاهده فاکتور</div>
-                    <button type="button" class="button" id="mbp-invoice-modal-close">بستن</button>
-                </div>
-
-                <div id="mbp-invoice-content">
-                    <!-- محتوای فاکتور اینجا لود میشود -->
-                </div>
-            </div>
-        </div>
-
-        <script>
-            jQuery(function ($) {
-                const nonce = '<?php echo wp_create_nonce("mbp_admin_action_nonce"); ?>';
-
-                // مشاهده فاکتور
-                $(document).on('click', '.mbp-view-invoice', function () {
-                    const invoiceId = $(this).data('id');
-                    $('#mbp-invoice-content').html('<div style="text-align:center;padding:20px;">در حال بارگذاری...</div>');
-                    $('#mbp-invoice-modal').show();
-
-                    $.post(ajaxurl, {
-                        action: 'mbp_get_invoice_details',
-                        invoice_id: invoiceId,
-                        nonce: nonce
-                    }, function (response) {
-                        if (response.success) {
-                            $('#mbp-invoice-content').html(response.data.html);
-                        } else {
-                            $('#mbp-invoice-content').html('<div style="color:#ef4444;text-align:center;padding:20px;">خطا در بارگذاری فاکتور</div>');
-                        }
-                    });
-                });
-
-                // چاپ فاکتور
-                $(document).on('click', '.mbp-print-invoice', function () {
-                    const invoiceId = $(this).data('id');
-                    window.open(ajaxurl + '?action=mbp_print_invoice&invoice_id=' + invoiceId + '&nonce=' + nonce, '_blank');
-                });
-
-                // ارسال ایمیل فاکتور
-                $(document).on('click', '.mbp-send-invoice', function () {
-                    const invoiceId = $(this).data('id');
-                    const button = $(this);
-                    const originalText = button.text();
-
-                    button.prop('disabled', true);
-                    button.text('در حال ارسال...');
-
-                    $.post(ajaxurl, {
-                        action: 'mbp_send_invoice_email',
-                        invoice_id: invoiceId,
-                        nonce: nonce
-                    }, function (response) {
-                        if (response.success) {
-                            alert('فاکتور با موفقیت ارسال شد');
-                        } else {
-                            alert(response.data.message || 'خطا در ارسال فاکتور');
-                        }
-                    }).always(function () {
-                        button.prop('disabled', false);
-                        button.text(originalText);
-                    });
-                });
-
-                // بستن مدال
-                $('#mbp-invoice-modal-close').on('click', function () {
-                    $('#mbp-invoice-modal').hide();
-                });
-
-                // خروجی Excel
-                $('#mbp-export-invoices').on('click', function () {
-                    window.location.href = ajaxurl + '?action=mbp_export_invoices&nonce=' + nonce;
-                });
-            });
-        </script>
-        <?php
-
-        $html = ob_get_clean();
-        wp_send_json_success(array('html' => $html));
+        wp_send_json_success(['message' => '✅ فاکتور حذف شد']);
     }
+
+
+public function ensure_invoice_tables(){
+  global $wpdb;
+  $t = $wpdb->prefix . 'mbp_invoices';
+  $charset_collate = $wpdb->get_charset_collate();
+
+  require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+  $sql = "CREATE TABLE {$t} (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    wc_order_id BIGINT UNSIGNED NULL,
+    customer_name varchar(190) NOT NULL,
+    mobile varchar(50) NULL,
+    email varchar(190) NULL,
+    notes longtext NULL,
+    items longtext NULL,
+    discount decimal(18,2) NOT NULL DEFAULT 0,
+    tax decimal(18,2) NOT NULL DEFAULT 0,
+    total decimal(18,2) NOT NULL DEFAULT 0,
+    status varchar(50) NOT NULL DEFAULT 'draft',
+    created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY  (id),
+    UNIQUE KEY wc_order_id (wc_order_id)
+  ) {$charset_collate};";
+
+  dbDelta($sql);
+}
+
+
 
     public function ajax_create_invoice()
     {
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => 'دسترسی ندارید'));
+            wp_send_json_error(['message' => 'دسترسی ندارید']);
         }
 
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
-            wp_send_json_error(array('message' => 'Nonce نامعتبر است'));
+            wp_send_json_error(['message' => 'Nonce نامعتبر است']);
         }
 
-        // پیاده‌سازی ایجاد فاکتور دستی
-        wp_send_json_success(array('message' => 'فاکتور ایجاد شد'));
+        $this->ensure_invoice_tables();
+
+        $customer_name = sanitize_text_field($_POST['customer_name'] ?? '');
+        $mobile = sanitize_text_field($_POST['mobile'] ?? '');
+        $email = sanitize_email($_POST['email'] ?? '');
+        $notes = sanitize_textarea_field($_POST['notes'] ?? '');
+        $discount = floatval($_POST['discount'] ?? 0);
+        $tax = floatval($_POST['tax'] ?? 0);
+
+        $items_json = wp_unslash($_POST['items'] ?? '[]');
+        $items = json_decode($items_json, true);
+
+        if (!$customer_name)
+            wp_send_json_error(['message' => 'نام مشتری الزامی است']);
+        if (!is_array($items) || empty($items))
+            wp_send_json_error(['message' => 'آیتم‌ها معتبر نیستند']);
+
+        // محاسبه subtotal
+        $subtotal = 0;
+        foreach ($items as $it) {
+            $qty = max(1, intval($it['qty'] ?? 1));
+            $unit = floatval($it['unit_price'] ?? 0);
+            $subtotal += ($qty * $unit);
+        }
+
+        $total = max(0, ($subtotal - $discount + $tax));
+
+        global $wpdb;
+        $t = $wpdb->prefix . 'mbp_invoices';
+
+        $ok = $wpdb->insert($t, [
+            'customer_name' => $customer_name,
+            'mobile' => $mobile,
+            'email' => $email,
+            'items' => wp_json_encode($items, JSON_UNESCAPED_UNICODE),
+            'discount' => $discount,
+            'tax' => $tax,
+            'subtotal' => $subtotal,
+            'total' => $total,
+            'notes' => $notes,
+        ], [
+            '%s',
+            '%s',
+            '%s',
+            '%s',
+            '%f',
+            '%f',
+            '%f',
+            '%f',
+            '%s',
+            '%s'
+        ]);
+
+        if (!$ok) {
+            wp_send_json_error(['message' => 'خطا در ذخیره فاکتور']);
+        }
+
+        wp_send_json_success(['id' => $wpdb->insert_id]);
     }
+
+
+function mbp_ajax_get_sms_settings() {
+  if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'دسترسی ندارید']);
+  $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+  if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) wp_send_json_error(['message'=>'Nonce نامعتبر است']);
+
+  if (!class_exists('MBP_SMS_Manager')) wp_send_json_error(['message'=>'کلاس MBP_SMS_Manager لود نشده']);
+
+  wp_send_json_success(['settings' => MBP_SMS_Manager::get_settings_array()]);
+}
+
+function mbp_ajax_save_sms_settings() {
+  if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'دسترسی ندارید']);
+  $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+  if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) wp_send_json_error(['message'=>'Nonce نامعتبر است']);
+
+  if (!class_exists('MBP_SMS_Manager')) wp_send_json_error(['message'=>'کلاس MBP_SMS_Manager لود نشده']);
+
+  $data = [];
+  foreach ($_POST as $k => $v) {
+    if ($k === 'action' || $k === 'nonce') continue;
+    $data[$k] = wp_unslash($v);
+  }
+
+  MBP_SMS_Manager::save_settings($data);
+  wp_send_json_success(['message'=>'✅ تنظیمات پیامک ذخیره شد']);
+}
+
+function mbp_ajax_sms_test_send() {
+  if (!current_user_can('manage_options')) wp_send_json_error(['message'=>'دسترسی ندارید']);
+  $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+  if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) wp_send_json_error(['message'=>'Nonce نامعتبر است']);
+
+  if (!class_exists('MBP_SMS_Manager')) wp_send_json_error(['message'=>'کلاس MBP_SMS_Manager لود نشده']);
+
+  $phone = isset($_POST['phone']) ? sanitize_text_field($_POST['phone']) : '';
+  $msg   = isset($_POST['message']) ? sanitize_textarea_field($_POST['message']) : '';
+
+  $sms = new MBP_SMS_Manager();
+  $ok  = $sms->send($phone, $msg, 'test');
+
+  if (!$ok) wp_send_json_error(['message'=>'ارسال ناموفق بود (لاگ را بررسی کن)']);
+  wp_send_json_success(['message'=>'✅ پیامک تست ارسال شد']);
+}
 
     public function ajax_update_invoice_status()
     {
@@ -3835,6 +3615,1077 @@ JS;
     // =========================
 
 
+private function invoice_settings_defaults() {
+    // پیش‌فرض‌ها از ووکامرس/وردپرس (هرجا نبود، خالی)
+    $store_name  = get_bloginfo('name');
+    $store_email = get_option('admin_email');
+    $store_site  = home_url();
+
+    $addr1 = (string) get_option('woocommerce_store_address', '');
+    $addr2 = (string) get_option('woocommerce_store_address_2', '');
+    $city  = (string) get_option('woocommerce_store_city', '');
+    $post  = (string) get_option('woocommerce_store_postcode', '');
+    $country = (string) get_option('woocommerce_default_country', '');
+    // phone در ووکامرس همیشه نیست، ولی اگر جایی ذخیره کرده باشی می‌گیریم
+    $phone = (string) get_option('woocommerce_store_phone', '');
+
+    return array(
+        // فروشنده (قابل Override)
+        'seller_logo_url'     => '',
+        'seller_name'         => $store_name,
+        'seller_phone'        => $phone,
+        'seller_email'        => $store_email,
+        'seller_website'      => $store_site,
+
+        'seller_address1'     => $addr1,
+        'seller_address2'     => $addr2,
+        'seller_city'         => $city,
+        'seller_postcode'     => $post,
+        'seller_country'      => $country, // مثلا IR:Tehran
+
+        // فیلدهایی که ووکامرس ندارد (طبق عکس)
+        'seller_reg_number'   => '', // شماره ثبت/ملی
+        'seller_economic_code'=> '', // شماره اقتصادی
+
+        // سفارشی‌ها (طبق عکس‌ها)
+        'seller_custom_label' => 'مقدار سفارشی فروشگاه',
+        'seller_custom_value' => '',
+
+        'order_meta_label'    => 'مقدار سفارشی',
+        'order_meta_key'      => '',  // مثلا order_meta_key = "my_meta_key"
+
+        'customer_meta_label' => 'سن',
+        'customer_meta_key'   => '',  // مثلا "age"
+    );
+}
+
+private function get_invoice_settings() {
+    $saved = get_option('mbp_invoice_settings', array());
+    if (!is_array($saved)) $saved = array();
+    return wp_parse_args($saved, $this->invoice_settings_defaults());
+}
+
+public function ajax_get_invoice_settings() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('message' => 'دسترسی ندارید'), 403);
+    }
+    $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+    if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) {
+        wp_send_json_error(array('message' => 'Nonce نامعتبر است'), 403);
+    }
+
+    wp_send_json_success(array(
+        'settings' => $this->get_invoice_settings()
+    ));
+}
+
+public function ajax_save_invoice_settings() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('message' => 'دسترسی ندارید'), 403);
+    }
+    $nonce = isset($_POST['nonce']) ? sanitize_text_field($_POST['nonce']) : '';
+    if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) {
+        wp_send_json_error(array('message' => 'Nonce نامعتبر است'), 403);
+    }
+
+    $fields = array(
+        'seller_logo_url', 'seller_name', 'seller_phone', 'seller_email', 'seller_website',
+        'seller_address1', 'seller_address2', 'seller_city', 'seller_postcode', 'seller_country',
+        'seller_reg_number', 'seller_economic_code',
+        'seller_custom_label', 'seller_custom_value',
+        'order_meta_label', 'order_meta_key',
+        'customer_meta_label', 'customer_meta_key',
+    );
+
+    $out = array();
+    foreach ($fields as $k) {
+        $v = isset($_POST[$k]) ? (string) $_POST[$k] : '';
+        if ($k === 'seller_logo_url' || $k === 'seller_website') {
+            $out[$k] = esc_url_raw($v);
+        } else {
+            $out[$k] = sanitize_text_field($v);
+        }
+    }
+
+    update_option('mbp_invoice_settings', $out);
+
+    wp_send_json_success(array('message' => 'تنظیمات ذخیره شد', 'settings' => $this->get_invoice_settings()));
+}
+
+
+public function ajax_print_invoice()
+{
+    if (!current_user_can('manage_options')) {
+        wp_die('دسترسی ندارید');
+    }
+
+    $nonce = isset($_REQUEST['nonce']) ? sanitize_text_field($_REQUEST['nonce']) : '';
+    if (!$nonce || !wp_verify_nonce($nonce, 'mbp_admin_action_nonce')) {
+        wp_die('Nonce نامعتبر است');
+    }
+
+    $invoice_id = 0;
+    if (isset($_REQUEST['invoice_id'])) $invoice_id = absint($_REQUEST['invoice_id']);
+    if (!$invoice_id && isset($_REQUEST['id'])) $invoice_id = absint($_REQUEST['id']);
+    if (!$invoice_id) wp_die('شناسه فاکتور ارسال نشده');
+
+    $tpl = isset($_REQUEST['tpl']) ? sanitize_key($_REQUEST['tpl']) : 'classic_a';
+    $allowed_tpl = array('classic_a','classic_b','airmail','store_block','customer_block','modern');
+    if (!in_array($tpl, $allowed_tpl, true)) $tpl = 'classic_a';
+
+    global $wpdb;
+    $t = $wpdb->prefix . 'mbp_invoices';
+
+    $inv = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$t} WHERE id = %d", $invoice_id));
+    if (!$inv) wp_die('فاکتور پیدا نشد');
+
+    // items json
+    $items = array();
+    if (!empty($inv->items)) {
+        $decoded = json_decode($inv->items, true);
+        if (is_array($decoded)) $items = $decoded;
+    }
+
+    // تنظیمات فروشنده (جدید)
+    $st = method_exists($this, 'get_invoice_settings') ? $this->get_invoice_settings() : array();
+
+    // ---- Woo fields
+    $order = null;
+
+    $order_number = '';
+    $order_status = '';
+    $payment_method_title = '';
+    $shipping_method_title = '';
+    $order_date_fa = '';
+    $coupon_codes = '';
+    $shipping_total = 0;
+    $order_meta_value = '';
+    $customer_meta_value = '';
+
+    // Customer details (prefer from WC)
+    $customer_first = '';
+    $customer_last = '';
+    $customer_name = (string)($inv->customer_name ?? '');
+    $customer_mobile = (string)($inv->mobile ?? '');
+    $customer_email  = (string)($inv->email ?? '');
+    $company = '';
+    $country_name = '';
+    $state_name = '';
+    $city = '';
+    $postcode = '';
+    $addr1 = '';
+    $addr2 = '';
+
+    // Seller details (from settings + fallback)
+    $store_name  = !empty($st['seller_name']) ? $st['seller_name'] : get_bloginfo('name');
+    $store_phone = !empty($st['seller_phone']) ? $st['seller_phone'] : (string)get_option('woocommerce_store_phone', '');
+    $store_email = !empty($st['seller_email']) ? $st['seller_email'] : get_option('admin_email');
+    $store_site  = !empty($st['seller_website']) ? $st['seller_website'] : home_url();
+
+    $store_addr1 = !empty($st['seller_address1']) ? $st['seller_address1'] : (string)get_option('woocommerce_store_address', '');
+    $store_addr2 = !empty($st['seller_address2']) ? $st['seller_address2'] : (string)get_option('woocommerce_store_address_2', '');
+    $store_city  = !empty($st['seller_city']) ? $st['seller_city'] : (string)get_option('woocommerce_store_city', '');
+    $store_post  = !empty($st['seller_postcode']) ? $st['seller_postcode'] : (string)get_option('woocommerce_store_postcode', '');
+
+    $store_address = trim(implode('، ', array_filter(array($store_addr1, $store_addr2, $store_city, $store_post))));
+
+    $seller_reg_number    = (string)($st['seller_reg_number'] ?? '');
+    $seller_economic_code = (string)($st['seller_economic_code'] ?? '');
+    $seller_logo_url      = (string)($st['seller_logo_url'] ?? '');
+
+    $seller_custom_label  = (string)($st['seller_custom_label'] ?? 'مقدار سفارشی فروشگاه');
+    $seller_custom_value  = (string)($st['seller_custom_value'] ?? '');
+
+    $order_meta_label = (string)($st['order_meta_label'] ?? 'مقدار سفارشی');
+    $order_meta_key   = (string)($st['order_meta_key'] ?? '');
+
+    $customer_meta_label = (string)($st['customer_meta_label'] ?? 'سن');
+    $customer_meta_key   = (string)($st['customer_meta_key'] ?? '');
+
+    // if wc order
+    if (!empty($inv->wc_order_id) && function_exists('wc_get_order')) {
+        $order = wc_get_order((int)$inv->wc_order_id);
+        if ($order) {
+            $order_number = $order->get_order_number();
+            $order_status = function_exists('wc_get_order_status_name')
+                ? wc_get_order_status_name($order->get_status())
+                : $order->get_status();
+
+            $payment_method_title  = $order->get_payment_method_title() ?: '';
+            $shipping_method_title = $order->get_shipping_method() ?: '';
+
+            $shipping_total = (float) $order->get_shipping_total();
+
+            // coupons
+            if (method_exists($order, 'get_coupon_codes')) {
+                $cc = $order->get_coupon_codes();
+                if (is_array($cc) && !empty($cc)) $coupon_codes = implode(', ', $cc);
+            }
+
+            $ots = $order->get_date_created() ? $order->get_date_created()->getTimestamp() : 0;
+            if ($ots && method_exists($this, 'fa_date_from_timestamp')) {
+                $order_date_fa = $this->fa_date_from_timestamp($ots, 'Y/m/d H:i', true);
+            }
+
+            // customer fields
+            $customer_first = (string) $order->get_billing_first_name();
+            $customer_last  = (string) $order->get_billing_last_name();
+            $company        = (string) $order->get_billing_company();
+
+            $customer_mobile = $customer_mobile ?: (string) $order->get_billing_phone();
+            $customer_email  = $customer_email  ?: (string) $order->get_billing_email();
+
+            // address prefer shipping
+            $addr1 = (string) $order->get_shipping_address_1();
+            $addr2 = (string) $order->get_shipping_address_2();
+            $city  = (string) $order->get_shipping_city();
+            $postcode = (string) $order->get_shipping_postcode();
+            $country  = (string) $order->get_shipping_country();
+            $state    = (string) $order->get_shipping_state();
+
+            if (!$addr1 && !$addr2) {
+                $addr1 = (string) $order->get_billing_address_1();
+                $addr2 = (string) $order->get_billing_address_2();
+                $city  = (string) $order->get_billing_city();
+                $postcode = (string) $order->get_billing_postcode();
+                $country  = (string) $order->get_billing_country();
+                $state    = (string) $order->get_billing_state();
+            }
+
+            if (function_exists('WC')) {
+                $countries = WC()->countries;
+                if ($countries) {
+                    $country_name = $country ? ($countries->countries[$country] ?? $country) : '';
+                    if ($country && $state) {
+                        $states = $countries->get_states($country);
+                        $state_name = $states[$state] ?? $state;
+                    }
+                }
+            }
+
+            // fallback customer full name
+            if (!$customer_name) {
+                $full = trim($customer_first . ' ' . $customer_last);
+                $customer_name = $full ?: (string)$order->get_formatted_billing_full_name();
+            }
+
+            // order meta & customer meta (طبق تنظیمات)
+            if ($order_meta_key) {
+                $v = $order->get_meta($order_meta_key, true);
+                $order_meta_value = is_scalar($v) ? (string)$v : '';
+            }
+            if ($customer_meta_key) {
+                // خیلی وقتا متای مشتری رو هم تو متای سفارش ذخیره میکنن
+                $v2 = $order->get_meta($customer_meta_key, true);
+                $customer_meta_value = is_scalar($v2) ? (string)$v2 : '';
+            }
+        }
+    }
+
+    // تاریخ فاکتور شمسی
+    $inv_ts = strtotime((string)$inv->created_at);
+    $invoice_date_fa = $inv_ts && method_exists($this, 'fa_date_from_timestamp')
+        ? $this->fa_date_from_timestamp($inv_ts, 'Y/m/d H:i', true)
+        : (string)$inv->created_at;
+
+    // محاسبات (از خود فاکتور)
+    $subtotal = 0;
+    foreach ($items as $it) {
+        $qty  = (int)($it['qty'] ?? 1);
+        $unit = (float)($it['unit_price'] ?? 0);
+        $subtotal += max(0, $qty * $unit);
+    }
+    $discount = (float)($inv->discount ?? 0);
+    $tax      = (float)($inv->tax ?? 0);
+    $total    = (float)($inv->total ?? max(0, $subtotal - $discount + $tax));
+
+    // آدرس مشتری به فرم عکس
+    $customer_address = trim(implode('، ', array_filter(array($addr1, $addr2, $postcode, $city))));
+
+    // toolbar url
+    $base_url = admin_url('admin-ajax.php');
+    $self_url = add_query_arg(array(
+        'action'     => 'mbp_print_invoice',
+        'invoice_id' => (int)$invoice_id,
+        'nonce'      => $nonce,
+    ), $base_url);
+
+    header('Content-Type: text/html; charset=utf-8');
+
+    // helper: KV line
+    $kv = function($label, $value) {
+        $label = (string)$label;
+        $value = (string)$value;
+        if ($value === '') $value = '-';
+        echo '<div class="kv"><span>'.esc_html($label).'</span><strong>'.esc_html($value).'</strong></div>';
+    };
+
+    // ===== COMMON HEAD (font + base css + toolbar with template selector) =====
+    ?>
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>فاکتور #</title>
+  <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+  <style>
+    @page{size:A4;margin:12mm}
+    body{margin:0;background:#f3f4f6;font-family:Vazirmatn,Tahoma,Arial;color:#111}
+    .toolbar{max-width:980px;margin:14px auto;display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+    .toolbar .left{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .btn{border:1px solid #d1d5db;background:#fff;border-radius:10px;padding:8px 12px;cursor:pointer;font-weight:900;font-family:Vazirmatn,Tahoma,Arial}
+    .btn.primary{background:#111827;color:#fff;border-color:#111827}
+    .sel{border:1px solid #d1d5db;background:#fff;border-radius:10px;padding:8px 10px;font-weight:800;font-family:Vazirmatn,Tahoma,Arial}
+
+    .sheet{max-width:980px;margin:14px auto;background:#fff;border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.08);overflow:hidden}
+    .content{padding:16px 18px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .card{border:1px solid #e5e7eb;border-radius:14px;padding:12px;background:#fff}
+    .title{font-weight:900;font-size:13px;margin:0 0 10px}
+    .kv{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px dashed #e5e7eb;font-size:13px}
+    .kv:last-child{border-bottom:none}
+    .kv span{color:#6b7280}
+
+    table{width:100%;border-collapse:separate;border-spacing:0;margin-top:12px;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden}
+    th,td{padding:10px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:right}
+    th{background:#f9fafb;font-weight:900}
+    tr:last-child td{border-bottom:none}
+    .sum{display:flex;justify-content:flex-end;margin-top:12px}
+    .sumBox{min-width:320px;border:1px solid #e5e7eb;border-radius:14px;padding:12px;background:#f9fafb}
+    .sumLine{display:flex;justify-content:space-between;gap:10px;padding:6px 0;font-size:13px}
+    .sumLine strong{font-weight:900}
+    .sumTotal{margin-top:8px;padding-top:10px;border-top:1px dashed #d1d5db;font-size:15px;font-weight:900}
+
+    /* dashed label */
+    .dashed{border:2px dashed #cbd5e1;border-radius:14px;padding:12px;background:#f9fafb}
+
+    /* classic styles */
+    .classic-hdr{padding:14px 18px;background:#fff;border-bottom:2px solid #111}
+    .classic-top{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+    .classic-logo{display:flex;align-items:center;gap:10px}
+    .classic-logo .txt{font-size:28px;font-weight:900;letter-spacing:2px}
+    .classic-muted{font-size:12px;color:#333;line-height:1.9}
+    .classic-table-info{width:100%;border:1px solid #bbb;border-radius:10px;overflow:hidden}
+    .classic-table-info th{background:#efefef}
+    .classic-qr{width:96px;height:96px;border:1px solid #aaa;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#777;font-weight:900}
+
+    /* airmail */
+    .airmail-border{border:10px solid transparent;
+      border-image: repeating-linear-gradient(45deg,#e11d48 0 10px,#fff 10px 20px,#2563eb 20px 30px,#fff 30px 40px) 10;
+      margin:14px auto;max-width:980px;background:#fff;border-radius:14px;overflow:hidden}
+    .airmail-inner{padding:14px 18px}
+
+    @media print{
+      body{background:#fff}
+      .toolbar{display:none}
+      .sheet{box-shadow:none;border:none;margin:0;max-width:none;border-radius:0}
+      .airmail-border{border-radius:0;margin:0}
+    }
+  </style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="left">
+    <button class="btn primary" onclick="window.print()">🖨️ چاپ</button>
+    <button class="btn" onclick="window.close()">✖ بستن</button>
+
+    <select class="sel" id="tplSel" title="انتخاب قالب">
+      <option value="classic_a" <?php selected($tpl,'classic_a'); ?>>کلاسیک A</option>
+      <option value="classic_b" <?php selected($tpl,'classic_b'); ?>>کلاسیک B (QR)</option>
+      <option value="modern" <?php selected($tpl,'modern'); ?>>مدرن</option>
+      <option value="airmail" <?php selected($tpl,'airmail'); ?>>پاکت/ایرمِیل</option>
+      <option value="store_block" <?php selected($tpl,'store_block'); ?>>سربرگ فروشنده</option>
+      <option value="customer_block" <?php selected($tpl,'customer_block'); ?>>سربرگ مشتری</option>
+    </select>
+  </div>
+
+  <div style="opacity:.75;font-size:12px">
+    فاکتور 
+    تاریخ: <?php echo esc_html($invoice_date_fa); ?>
+  </div>
+</div>
+
+<script>
+  (function(){
+    var sel = document.getElementById('tplSel');
+    if(!sel) return;
+    sel.addEventListener('change', function(){
+      var tpl = sel.value;
+      var url = <?php echo wp_json_encode($self_url); ?>;
+      url += '&tpl=' + encodeURIComponent(tpl);
+      window.location.href = url;
+    });
+  })();
+</script>
+
+<?php
+// =========================
+// TEMPLATE: store_block (سربرگ فروشنده کامل مثل عکس)
+// =========================
+if ($tpl === 'store_block') :
+?>
+  <div class="sheet">
+    <div style="padding:16px 18px;background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:900;font-size:18px;line-height:1.6"><?php echo esc_html($store_name); ?></div>
+          <div style="opacity:.92;font-size:12px;margin-top:6px;line-height:1.9">
+            تاریخ صدور: <?php echo esc_html($invoice_date_fa); ?>
+            <?php if ($order_date_fa): ?><span style="margin-right:10px">| تاریخ سفارش: <?php echo esc_html($order_date_fa); ?></span><?php endif; ?>
+          </div>
+        </div>
+        <div style="text-align:left">
+          <div style="display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.24);font-size:12px;font-weight:900">
+            📌 سربرگ فروشنده
+          </div>
+          <div style="opacity:.92;font-size:12px;margin-top:8px;line-height:1.9">
+            شماره: <strong>#<?php echo (int)$inv->id; ?></strong><br>
+            وضعیت: <strong><?php echo esc_html($order_status ?: ($inv->status ?? 'created')); ?></strong><br>
+            سفارش: <strong><?php echo esc_html($order_number ?: ($inv->wc_order_id ?? '-')); ?></strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid">
+        <div class="card">
+          <div class="title">مشخصات فروشگاه</div>
+          <?php
+            $kv('آدرس', $store_addr1 ?: '-');
+            $kv('ادامه آدرس', $store_addr2 ?: '-');
+            $kv('شهر', $store_city ?: '-');
+            $kv('کد پستی', $store_post ?: '-');
+          ?>
+        </div>
+
+        <div class="card">
+          <div class="title">راه‌های ارتباطی / شناسه‌ها</div>
+          <?php
+            $kv('تلفن', $store_phone ?: '-');
+            $kv('ایمیل', $store_email ?: '-');
+            $kv('وب‌سایت', $store_site ?: '-');
+            $kv('شماره ثبت/ملی', $seller_reg_number ?: '-');
+            $kv('شماره اقتصادی', $seller_economic_code ?: '-');
+          ?>
+        </div>
+      </div>
+
+      <div style="margin-top:12px" class="dashed">
+        <div style="font-weight:900;margin-bottom:8px">اطلاعات سفارش</div>
+        <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <?php
+              $kv('روش پرداخت', $payment_method_title ?: '-');
+              $kv('روش حمل و نقل', $shipping_method_title ?: '-');
+              $kv('هزینه حمل', $shipping_total ? number_format($shipping_total).' تومان' : '-');
+            ?>
+          </div>
+          <div>
+            <?php
+              if ($seller_custom_label) $kv($seller_custom_label, $seller_custom_value ?: '-');
+              if ($order_meta_label && $order_meta_key) $kv($order_meta_label, $order_meta_value ?: '-');
+              if ($coupon_codes) $kv('کد(های) تخفیف', $coupon_codes);
+            ?>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;opacity:.7;font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>این بخش برای چاپ سربرگ/فرستنده طراحی شده است.</div>
+        <div>MBP</div>
+      </div>
+    </div>
+  </div>
+</body></html>
+<?php
+exit;
+endif;
+
+// =========================
+// TEMPLATE: customer_block (سربرگ مشتری کامل مثل عکس)
+// =========================
+if ($tpl === 'customer_block') :
+?>
+  <div class="sheet">
+    <div style="padding:16px 18px;background:linear-gradient(135deg,#a855f7,#ec4899);color:#fff">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:900;font-size:18px;line-height:1.6">گیرنده / سربرگ مشتری</div>
+          <div style="opacity:.92;font-size:12px;margin-top:6px;line-height:1.9">
+            تاریخ صدور: <?php echo esc_html($invoice_date_fa); ?>
+            <?php if ($order_date_fa): ?><span style="margin-right:10px">| تاریخ سفارش: <?php echo esc_html($order_date_fa); ?></span><?php endif; ?>
+          </div>
+        </div>
+        <div style="text-align:left">
+          <div style="display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.24);font-size:12px;font-weight:900">
+            📦 سربرگ مشتری
+          </div>
+          <div style="opacity:.92;font-size:12px;margin-top:8px;line-height:1.9">
+            شماره: <strong>#<?php echo (int)$inv->id; ?></strong><br>
+            وضعیت: <strong><?php echo esc_html($order_status ?: ($inv->status ?? 'created')); ?></strong><br>
+            سفارش: <strong><?php echo esc_html($order_number ?: ($inv->wc_order_id ?? '-')); ?></strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="dashed">
+        <div style="font-weight:900;font-size:15px;margin-bottom:10px">👤 مشخصات مشتری</div>
+
+        <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
+          <div class="card" style="border:none;padding:0">
+            <?php
+              $kv('نام', $customer_first ?: '-');
+              $kv('نام خانوادگی', $customer_last ?: '-');
+              $kv('نام کامل', $customer_name ?: '-');
+              $kv('تلفن', $customer_mobile ?: '-');
+              $kv('ایمیل', $customer_email ?: '-');
+              $kv('شرکت', $company ?: '-');
+            ?>
+          </div>
+
+          <div class="card" style="border:none;padding:0">
+            <?php
+              $kv('کشور', $country_name ?: '-');
+              $kv('استان', $state_name ?: '-');
+              $kv('شهر', $city ?: '-');
+              $kv('کد پستی', $postcode ?: '-');
+              $kv('آدرس', $addr1 ?: '-');
+              $kv('ادامه آدرس', $addr2 ?: '-');
+            ?>
+          </div>
+        </div>
+
+        <div style="margin-top:10px" class="grid" style="grid-template-columns:1fr 1fr;">
+          <div>
+            <?php
+              $kv('روش پرداخت', $payment_method_title ?: '-');
+              $kv('روش حمل و نقل', $shipping_method_title ?: '-');
+            ?>
+          </div>
+          <div>
+            <?php
+              if ($order_meta_label && $order_meta_key) $kv($order_meta_label, $order_meta_value ?: '-');
+              if ($customer_meta_label && $customer_meta_key) $kv($customer_meta_label, $customer_meta_value ?: '-');
+            ?>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;opacity:.75;font-size:12px">
+        مبلغ نهایی: <strong><?php echo esc_html(number_format((float)$total)); ?> تومان</strong>
+      </div>
+    </div>
+  </div>
+</body></html>
+<?php
+exit;
+endif;
+
+// =========================
+// TEMPLATE: modern
+// =========================
+if ($tpl === 'modern') :
+?>
+  <div class="sheet">
+    <div style="padding:18px 18px 14px;background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <?php if ($seller_logo_url): ?>
+            <img src="<?php echo esc_url($seller_logo_url); ?>" style="width:42px;height:42px;border-radius:12px;object-fit:cover;background:#fff" alt="">
+          <?php endif; ?>
+          <div>
+            <div style="font-weight:900;font-size:18px;line-height:1.6">فاکتور رسمی</div>
+            <div style="opacity:.92;font-size:12px;margin-top:6px">
+              تاریخ فاکتور: <?php echo esc_html($invoice_date_fa); ?>
+              <?php if ($order_date_fa): ?>
+                <span style="margin-right:10px">| تاریخ سفارش: <?php echo esc_html($order_date_fa); ?></span>
+              <?php endif; ?>
+            </div>
+          </div>
+        </div>
+
+        <div style="text-align:left">
+          <div style="display:inline-block;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.24);font-size:12px">
+            وضعیت: <?php echo esc_html($order_status ?: ($inv->status ?? 'created')); ?>
+          </div>
+          <div style="opacity:.92;font-size:12px;margin-top:8px;line-height:1.9">
+            شماره: <strong>#<?php echo (int)$inv->id; ?></strong><br>
+            سفارش: <strong><?php echo esc_html($order_number ?: ($inv->wc_order_id ?? '-')); ?></strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid">
+        <div class="card">
+          <div class="title">مشخصات فروشنده</div>
+          <?php
+            $kv('نام', $store_name);
+            $kv('تلفن', $store_phone);
+            $kv('ایمیل', $store_email);
+            $kv('وب‌سایت', $store_site);
+            $kv('آدرس', $store_address);
+            if ($seller_reg_number) $kv('شماره ثبت/ملی', $seller_reg_number);
+            if ($seller_economic_code) $kv('شماره اقتصادی', $seller_economic_code);
+          ?>
+        </div>
+
+        <div class="card">
+          <div class="title">مشخصات مشتری</div>
+          <?php
+            $kv('نام', $customer_name);
+            $kv('تلفن', $customer_mobile);
+            $kv('ایمیل', $customer_email);
+            $kv('آدرس', $customer_address);
+            if ($company) $kv('شرکت', $company);
+          ?>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>اسم آیتم</th>
+            <th width="90">تعداد</th>
+            <th width="140">قیمت واحد</th>
+            <th width="160">جمع</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php if (empty($items)): ?>
+            <tr><td colspan="4" style="text-align:center;color:#6b7280">آیتمی ثبت نشده</td></tr>
+          <?php else:
+            foreach ($items as $it):
+              $desc = $it['description'] ?? '';
+              $qty  = (int)($it['qty'] ?? 1);
+              $unit = (float)($it['unit_price'] ?? 0);
+              $line = max(0, $qty * $unit);
+          ?>
+            <tr>
+              <td><?php echo esc_html($desc); ?></td>
+              <td><?php echo esc_html($qty); ?></td>
+              <td><?php echo esc_html(number_format($unit)); ?></td>
+              <td><?php echo esc_html(number_format($line)); ?></td>
+            </tr>
+          <?php endforeach; endif; ?>
+        </tbody>
+      </table>
+
+      <div class="sum">
+        <div class="sumBox">
+          <div class="sumLine"><span>جمع جزء</span><strong><?php echo esc_html(number_format($subtotal)); ?> تومان</strong></div>
+          <div class="sumLine"><span>تخفیف</span><strong><?php echo esc_html(number_format($discount)); ?> تومان</strong></div>
+          <div class="sumLine"><span>هزینه</span><strong><?php echo esc_html(number_format($tax)); ?> تومان</strong></div>
+          <div class="sumTotal">مبلغ نهایی: <?php echo esc_html(number_format($total)); ?> تومان</div>
+          <?php if ($coupon_codes): ?><div style="margin-top:8px;font-size:12px;opacity:.8">کد(های) تخفیف: <?php echo esc_html($coupon_codes); ?></div><?php endif; ?>
+        </div>
+      </div>
+    </div>
+  </div>
+</body></html>
+<?php
+exit;
+endif;
+
+// =========================
+// TEMPLATE: airmail
+// =========================
+if ($tpl === 'airmail') :
+?>
+  <div class="airmail-border">
+    <div class="airmail-inner">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="font-weight:900;font-size:18px">پاکت / برچسب ارسال</div>
+        <div style="font-size:12px;color:#444">تاریخ صدور: <?php echo esc_html($invoice_date_fa); ?></div>
+      </div>
+
+      <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="card">
+          <div class="title">فرستنده</div>
+          <?php
+            $kv('نام', $store_name);
+            $kv('تلفن', $store_phone);
+            $kv('ایمیل', $store_email);
+            $kv('کد پستی', $store_post);
+            $kv('آدرس', trim(implode('، ', array_filter(array($store_addr1, $store_addr2, $store_city)))));
+            if ($seller_reg_number) $kv('شماره ثبت/ملی', $seller_reg_number);
+            if ($seller_economic_code) $kv('شماره اقتصادی', $seller_economic_code);
+          ?>
+        </div>
+
+        <div class="card">
+          <div class="title">گیرنده</div>
+          <?php
+            $kv('نام', $customer_first ?: $customer_name);
+            if ($customer_last) $kv('نام خانوادگی', $customer_last);
+            $kv('تلفن', $customer_mobile);
+            $kv('ایمیل', $customer_email);
+            $kv('کد پستی', $postcode);
+            $kv('آدرس', trim(implode('، ', array_filter(array($addr1, $addr2, $city)))));
+            if ($company) $kv('شرکت', $company);
+          ?>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;justify-content:space-between">
+        <div class="card" style="flex:1;min-width:260px">
+          <div class="title">اطلاعات سفارش</div>
+          <?php
+            $kv('شماره سفارش', $order_number ?: ($inv->wc_order_id ?? '-'));
+            $kv('وضعیت', $order_status ?: ($inv->status ?? 'created'));
+            $kv('روش پرداخت', $payment_method_title ?: '-');
+            $kv('روش ارسال', $shipping_method_title ?: '-');
+            if ($order_meta_label && $order_meta_key) $kv($order_meta_label, $order_meta_value ?: '-');
+          ?>
+        </div>
+
+        <div class="card" style="width:240px;text-align:center">
+          <div class="title">کد</div>
+          <div style="font-weight:900;font-size:20px">#<?php echo (int)$inv->id; ?></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body></html>
+<?php
+exit;
+endif;
+
+// =========================
+// TEMPLATE: classic_a / classic_b
+// =========================
+$show_qr = ($tpl === 'classic_b');
+?>
+  <div class="sheet">
+    <div class="classic-hdr">
+      <div class="classic-top">
+        <div>
+          <div class="classic-logo">
+            <?php if ($seller_logo_url): ?>
+              <img src="<?php echo esc_url($seller_logo_url); ?>" style="width:44px;height:44px;border-radius:12px;object-fit:cover;border:1px solid #e5e7eb" alt="">
+            <?php endif; ?>
+            <div class="txt">LOGO</div>
+          </div>
+          <div class="classic-muted">
+            <strong><?php echo esc_html($store_name); ?></strong><br>
+            <?php if ($store_addr1): ?>آدرس: <?php echo esc_html($store_addr1); ?><br><?php endif; ?>
+            <?php if ($store_addr2): ?>ادامه آدرس: <?php echo esc_html($store_addr2); ?><br><?php endif; ?>
+            <?php if ($store_post): ?>کد پستی: <?php echo esc_html($store_post); ?><br><?php endif; ?>
+            <?php if ($store_email): ?>ایمیل: <?php echo esc_html($store_email); ?><br><?php endif; ?>
+            <?php if ($store_phone): ?>تلفن: <?php echo esc_html($store_phone); ?><br><?php endif; ?>
+            <?php if ($store_site): ?>وب‌سایت: <?php echo esc_html($store_site); ?><br><?php endif; ?>
+            <?php if ($seller_reg_number): ?>شماره ثبت/ملی: <?php echo esc_html($seller_reg_number); ?><br><?php endif; ?>
+            <?php if ($seller_economic_code): ?>شماره اقتصادی: <?php echo esc_html($seller_economic_code); ?><br><?php endif; ?>
+          </div>
+        </div>
+
+        <div style="text-align:left">
+          <?php if ($show_qr): ?>
+            <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center">
+              <div class="classic-qr">QR</div>
+              <div class="classic-muted" style="text-align:right">
+                شماره: <strong>#<?php echo (int)$inv->id; ?></strong><br>
+                تاریخ صدور: <strong><?php echo esc_html($invoice_date_fa); ?></strong><br>
+                وضعیت: <strong><?php echo esc_html($order_status ?: ($inv->status ?? 'created')); ?></strong><br>
+                سفارش: <strong><?php echo esc_html($order_number ?: ($inv->wc_order_id ?? '-')); ?></strong>
+              </div>
+            </div>
+          <?php else: ?>
+            <div class="classic-muted">
+              شماره: <strong>#<?php echo (int)$inv->id; ?></strong><br>
+              تاریخ صدور: <strong><?php echo esc_html($invoice_date_fa); ?></strong><br>
+              وضعیت: <strong><?php echo esc_html($order_status ?: ($inv->status ?? 'created')); ?></strong><br>
+              سفارش: <strong><?php echo esc_html($order_number ?: ($inv->wc_order_id ?? '-')); ?></strong>
+            </div>
+          <?php endif; ?>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:0">
+        <table class="classic-table-info">
+          <thead><tr><th colspan="2">مشخصات مشتری</th></tr></thead>
+          <tbody>
+            <tr><td>نام</td><td><?php echo esc_html($customer_first ?: $customer_name ?: '-'); ?></td></tr>
+            <tr><td>نام خانوادگی</td><td><?php echo esc_html($customer_last ?: '-'); ?></td></tr>
+            <tr><td>تلفن</td><td><?php echo esc_html($customer_mobile ?: '-'); ?></td></tr>
+            <tr><td>ایمیل</td><td><?php echo esc_html($customer_email ?: '-'); ?></td></tr>
+            <tr><td>کد پستی</td><td><?php echo esc_html($postcode ?: '-'); ?></td></tr>
+            <tr><td>آدرس</td><td><?php echo esc_html($customer_address ?: '-'); ?></td></tr>
+            <tr><td>شرکت</td><td><?php echo esc_html($company ?: '-'); ?></td></tr>
+          </tbody>
+        </table>
+
+        <table class="classic-table-info">
+          <thead><tr><th colspan="2">مشخصات سفارش</th></tr></thead>
+          <tbody>
+            <tr><td>روش پرداخت</td><td><?php echo esc_html($payment_method_title ?: '-'); ?></td></tr>
+            <tr><td>روش حمل و نقل</td><td><?php echo esc_html($shipping_method_title ?: '-'); ?></td></tr>
+            <tr><td>تاریخ سفارش</td><td><?php echo esc_html($order_date_fa ?: '-'); ?></td></tr>
+            <tr><td>کد(های) تخفیف</td><td><?php echo esc_html($coupon_codes ?: '-'); ?></td></tr>
+            <?php if ($seller_custom_label): ?>
+              <tr><td><?php echo esc_html($seller_custom_label); ?></td><td><?php echo esc_html($seller_custom_value ?: '-'); ?></td></tr>
+            <?php endif; ?>
+            <?php if ($order_meta_label && $order_meta_key): ?>
+              <tr><td><?php echo esc_html($order_meta_label); ?></td><td><?php echo esc_html($order_meta_value ?: '-'); ?></td></tr>
+            <?php endif; ?>
+            <?php if ($customer_meta_label && $customer_meta_key): ?>
+              <tr><td><?php echo esc_html($customer_meta_label); ?></td><td><?php echo esc_html($customer_meta_value ?: '-'); ?></td></tr>
+            <?php endif; ?>
+          </tbody>
+        </table>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th width="60">#</th>
+            <th>نام محصول / آیتم</th>
+            <th width="110">تعداد</th>
+            <th width="160">قیمت</th>
+            <th width="170">مجموع</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php if (empty($items)): ?>
+            <tr><td colspan="5" style="text-align:center;color:#6b7280">آیتمی ثبت نشده</td></tr>
+          <?php else:
+            $i = 0;
+            foreach ($items as $it):
+              $i++;
+              $desc = $it['description'] ?? '';
+              $qty  = (int)($it['qty'] ?? 1);
+              $unit = (float)($it['unit_price'] ?? 0);
+              $line = max(0, $qty * $unit);
+          ?>
+            <tr>
+              <td><?php echo esc_html($i); ?></td>
+              <td><?php echo esc_html($desc); ?></td>
+              <td><?php echo esc_html($qty); ?></td>
+              <td><?php echo esc_html(number_format($unit)); ?> تومان</td>
+              <td><?php echo esc_html(number_format($line)); ?> تومان</td>
+            </tr>
+          <?php endforeach; endif; ?>
+        </tbody>
+      </table>
+
+      <div class="sum">
+        <div class="sumBox">
+          <div class="sumLine"><span>جمع کل</span><strong><?php echo esc_html(number_format($subtotal)); ?> تومان</strong></div>
+          <div class="sumLine"><span>تخفیف</span><strong><?php echo esc_html(number_format($discount)); ?> تومان</strong></div>
+          <div class="sumLine"><span>هزینه</span><strong><?php echo esc_html(number_format($tax)); ?> تومان</strong></div>
+          <div class="sumTotal">مبلغ نهایی: <?php echo esc_html(number_format($total)); ?> تومان</div>
+        </div>
+      </div>
+
+      <div style="margin-top:20px;display:flex;justify-content:space-between;color:#444;font-size:12px">
+        <div>مهر و امضای مشتری</div>
+        <div>مهر و امضای فروشنده</div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
+<?php
+exit;
+}
+
+
+
+
+
+
+
+public function ajax_get_wc_orders(){
+  if (!current_user_can('manage_options')) {
+    wp_send_json_error(['message' => 'دسترسی ندارید']);
+  }
+  if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
+    wp_send_json_error(['message' => 'Nonce نامعتبر است']);
+  }
+
+  if (!function_exists('wc_get_orders')) {
+    wp_send_json_success(['html' => '<div style="padding:18px;border-radius:12px;border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.10);color:#fecaca;">ووکامرس نصب/فعال نیست</div>']);
+  }
+
+  $this->ensure_invoice_tables();
+
+  $orders = wc_get_orders([
+    'limit'   => 50,
+    'orderby' => 'date',
+    'order'   => 'DESC',
+    'status'  => ['processing','completed']
+  ]);
+
+  global $wpdb;
+  $t = $wpdb->prefix . 'mbp_invoices';
+
+  // سفارش->فاکتور
+  $map = [];
+  $rows = $wpdb->get_results("SELECT id, wc_order_id FROM {$t} WHERE wc_order_id IS NOT NULL", ARRAY_A);
+  foreach ($rows as $r){
+    $map[(int)$r['wc_order_id']] = (int)$r['id'];
+  }
+
+  ob_start();
+  ?>
+  <div style="overflow:auto;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);">
+    <table class="wp-list-table widefat fixed striped" style="min-width:1050px;">
+      <thead>
+        <tr>
+          <th width="110">سفارش</th>
+          <th>مشتری</th>
+          <th width="140">مبلغ</th>
+          <th width="170">تاریخ</th>
+          <th width="160">روش پرداخت</th>
+          <th width="220">فاکتور</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php if (empty($orders)): ?>
+        <tr><td colspan="6" style="text-align:center;padding:18px;">سفارشی یافت نشد</td></tr>
+      <?php else: foreach ($orders as $o):
+        $oid = $o->get_id();
+        $invoice_id = isset($map[$oid]) ? $map[$oid] : 0;
+
+        $name = trim($o->get_formatted_billing_full_name());
+        if (!$name) $name = '—';
+
+        $contact = $o->get_billing_phone() ?: $o->get_billing_email();
+
+        // آدرس مشتری (Billing)
+        $addr_html = $o->get_formatted_billing_address(); // html
+        $addr_html = str_replace(['<br/>','<br>','<br />'], '، ', $addr_html);
+        $addr = trim(wp_strip_all_tags($addr_html));
+        if (!$addr) $addr = '—';
+
+        // تاریخ شمسی
+        $ts = $o->get_date_created() ? $o->get_date_created()->getTimestamp() : 0;
+        $date_fa = $ts ? $this->fa_date_from_timestamp($ts, 'Y/m/d H:i', true) : '—';
+
+        // روش پرداخت
+        $pm = $o->get_payment_method_title();
+        if (!$pm) $pm = '—';
+
+        $total = (float)$o->get_total();
+   
+        ?>
+        <tr>
+          <td><strong>#<?php echo esc_html($oid); ?></strong></td>
+
+          <td>
+            <div style="font-weight:800;"><?php echo esc_html($name); ?></div>
+            <div style="opacity:.75;font-size:12px;"><?php echo esc_html($contact ?: '—'); ?></div>
+            
+          </td>
+
+          <td style="font-weight:900;"><?php echo esc_html(number_format($total)); ?> تومان</td>
+
+          <td style="opacity:.85;"><?php echo esc_html($date_fa); ?></td>
+
+          <td style="opacity:.9;"><?php echo esc_html($pm); ?></td>
+
+          <td>
+            <?php if ($invoice_id): ?>
+              <button class="mbp-btn mbp-inv-print" data-id="<?php echo esc_attr($invoice_id); ?>">🖨️ چاپ</button>
+              <button class="mbp-btn mbp-inv-del" data-id="<?php echo esc_attr($invoice_id); ?>">🗑️ حذف</button>
+            <?php else: ?>
+              <button class="mbp-btn mbp-wc-make-inv" data-order="<?php echo esc_attr($oid); ?>">➕ ساخت فاکتور</button>
+            <?php endif; ?>
+          </td>
+        </tr>
+      <?php endforeach; endif; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php
+
+  wp_send_json_success(['html' => ob_get_clean()]);
+}
+
+
+public function ajax_create_invoice_from_wc_order(){
+  if (!current_user_can('manage_options')) {
+    wp_send_json_error(['message' => 'دسترسی ندارید']);
+  }
+  if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'mbp_admin_action_nonce')) {
+    wp_send_json_error(['message' => 'Nonce نامعتبر است']);
+  }
+
+  if (!function_exists('wc_get_order')) {
+    wp_send_json_error(['message' => 'ووکامرس فعال نیست']);
+  }
+
+  $order_id = isset($_POST['order_id']) ? absint($_POST['order_id']) : 0;
+  if (!$order_id) wp_send_json_error(['message' => 'order_id نامعتبر است']);
+
+  $this->ensure_invoice_tables();
+
+  global $wpdb;
+  $t = $wpdb->prefix . 'mbp_invoices';
+
+  // اگر قبلاً ساخته شده بود
+  $existing = (int)$wpdb->get_var($wpdb->prepare("SELECT id FROM {$t} WHERE wc_order_id=%d", $order_id));
+  if ($existing){
+    wp_send_json_success(['invoice_id' => $existing]);
+  }
+
+  $order = wc_get_order($order_id);
+  if (!$order){
+    wp_send_json_error(['message' => 'سفارش پیدا نشد']);
+  }
+
+  $items = [];
+  foreach ($order->get_items() as $item){
+    $qty = (int)$item->get_quantity();
+    $line_total = (float)$item->get_total(); // بعد از تخفیف آیتم
+    $unit = $qty > 0 ? ($line_total / $qty) : $line_total;
+
+    $items[] = [
+      'description' => $item->get_name(),
+      'qty' => max(1, $qty),
+      'unit_price' => round($unit, 2),
+    ];
+  }
+
+  // هزینه ارسال را هم آیتم کن
+  $shipping_total = (float)$order->get_shipping_total();
+  if ($shipping_total > 0){
+    $items[] = ['description' => 'هزینه ارسال', 'qty' => 1, 'unit_price' => round($shipping_total, 2)];
+  }
+
+  $customer_name = trim($order->get_formatted_billing_full_name());
+  if (!$customer_name) $customer_name = 'سفارش #' . $order_id;
+
+  $data = [
+    'wc_order_id'   => $order_id,
+    'customer_name' => $customer_name,
+    'mobile'        => $order->get_billing_phone(),
+    'email'         => $order->get_billing_email(),
+    'notes'         => 'WooCommerce Order #' . $order_id,
+    'items'         => wp_json_encode($items, JSON_UNESCAPED_UNICODE),
+    'discount'      => (float)$order->get_discount_total(),
+    'tax'           => (float)$order->get_total_tax(), // اگر نمیخوای، 0 بگذار
+    'total'         => (float)$order->get_total(),
+    'status'        => 'paid',
+    'created_at'    => current_time('mysql'),
+  ];
+
+  $ok = $wpdb->insert($t, $data);
+  if (!$ok){
+    wp_send_json_error(['message' => 'خطا در ذخیره فاکتور']);
+  }
+
+  wp_send_json_success(['invoice_id' => (int)$wpdb->insert_id]);
+}
+
 
     public function render_dashboard_app_page()
     {
@@ -3914,6 +4765,159 @@ JS;
                     color: #fff;
                     overflow: hidden;
                 }
+
+                
+                /* Wrapper کلی */
+#mbp-view .mbp-inv-create-wrap{
+  max-width: 980px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* کارت‌ها */
+#mbp-view .mbp-inv-card{
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+/* هدر کارت */
+#mbp-view .mbp-inv-card-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+#mbp-view .mbp-inv-card-title{font-weight:900;font-size:15px;}
+#mbp-view .mbp-inv-card-sub{opacity:.75;font-size:12px;}
+
+#mbp-view .mbp-inv-mt{margin-top:10px;}
+
+/* گرید اطلاعات مشتری */
+#mbp-view .mbp-inv-grid-3{
+  display:grid;
+  grid-template-columns:1.2fr 1fr 1fr;
+  gap:10px;
+  margin-top:12px;
+}
+
+/* هدر آیتم‌ها */
+#mbp-view .mbp-inv-items-head{
+  margin-top:12px;
+  display:grid;
+  grid-template-columns:1.3fr .45fr .6fr .7fr .25fr;
+  gap:8px;
+  font-size:12px;
+  opacity:.75;
+  padding:0 2px;
+}
+
+/* اسکرول داخلی آیتم‌ها (حل بیرون زدن) */
+#mbp-view .mbp-inv-items-scroll{
+  margin-top:8px;
+  max-height: min(46vh, 420px);
+  overflow:auto;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.12);
+}
+#mbp-view .mbp-inv-items{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+/* هر ردیف آیتم (اگر JS همین کلاس‌ها رو می‌سازه) */
+#mbp-view .mbp-inv-item-row{
+  display:grid;
+  grid-template-columns:1.3fr .45fr .6fr .7fr .25fr;
+  gap:8px;
+  align-items:center;
+  padding:10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+}
+#mbp-view .mbp-inv-item-total{
+  font-weight:900;
+  opacity:.95;
+}
+#mbp-view .mbp-inv-remove-item{
+  border:1px solid rgba(239,68,68,.35);
+  background: rgba(239,68,68,.10);
+  color:#fecaca;
+  border-radius: 10px;
+  padding:8px 10px;
+  cursor:pointer;
+  font-family: Vazirmatn, sans-serif;
+  font-weight: 800;
+}
+
+/* Hint */
+#mbp-view .mbp-inv-hint{
+  margin-top:12px;
+  opacity:.7;
+  font-size:12px;
+  line-height:1.8;
+}
+
+/* جمع‌بندی Sticky پایین */
+#mbp-view .mbp-inv-sticky{
+  position: sticky;
+  bottom: 0;
+  background: rgba(16,24,40,.92);
+  backdrop-filter: blur(6px);
+}
+
+/* جمع‌بندی */
+#mbp-view .mbp-inv-sum-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:10px;
+  align-items:end;
+}
+#mbp-view .mbp-inv-total-box-wrap{text-align:left;}
+#mbp-view .mbp-inv-total-caption{opacity:.7;font-size:12px;margin-bottom:6px;}
+#mbp-view .mbp-inv-total-box{
+  font-weight:900;
+  font-size:18px;
+  padding:10px 12px;
+  border-radius:14px;
+  background:rgba(16,185,129,.14);
+  border:1px solid rgba(16,185,129,.25);
+  display:inline-block;
+  min-width:200px;
+  text-align:center;
+}
+
+/* دکمه‌ها */
+#mbp-view .mbp-inv-actions{
+  margin-top:14px;
+  display:flex;
+  gap:10px;
+  justify-content:flex-start;
+  flex-wrap:wrap;
+}
+
+/* ریسپانسیو */
+@media (max-width: 900px){
+  #mbp-view .mbp-inv-grid-3{grid-template-columns:1fr;}
+  #mbp-view .mbp-inv-sum-grid{grid-template-columns:1fr;}
+  #mbp-view .mbp-inv-items-head{display:none;}
+  #mbp-view .mbp-inv-item-row{
+    grid-template-columns:1fr;
+    gap:10px;
+  }
+  #mbp-view .mbp-inv-items-scroll{
+    max-height: 55vh;
+  }
+}
+
 
                 .mbp-shell {
                     height: 100%;
@@ -4531,7 +5535,7 @@ JS;
                 }
 
                 .mbp-form-input {
-                    width: 100%;
+                    width: 80%;
                     padding: 10px 12px;
                     background: rgba(255, 255, 255, .06);
                     border: 1px solid rgba(255, 255, 255, .16);
@@ -4645,6 +5649,43 @@ JS;
                     animation: spin 1s ease-in-out infinite;
                 }
 
+                .mbp-inv-item-row{
+  display:grid;
+  grid-template-columns: 1.4fr .45fr .7fr .7fr auto;
+  gap:10px;
+  align-items:center;
+  margin-bottom:10px;
+  padding:10px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:14px;
+  background: rgba(255,255,255,.04);
+}
+.mbp-inv-item-total{
+  font-weight:900;
+  opacity:.95;
+  text-align:center;
+}
+.mbp-inv-remove-item{
+  border:1px solid rgba(239,68,68,.45);
+  background: rgba(239,68,68,.08);
+  color:#fecaca;
+  border-radius:10px;
+  padding:8px 10px;
+  cursor:pointer;
+  font-weight:900;
+}
+.mbp-inv-remove-item:hover{
+  background: rgba(239,68,68,.14);
+}
+/* داخل UI فاکتور، ورودی‌ها 100% باشند */
+#mbp-view .mbp-inv-create-wrap .mbp-form-input{ width:100% !important; }
+
+/* اسکرول داخلی آیتم‌ها حتماً فعال باشد */
+#mbp-view .mbp-inv-items-scroll{
+  max-height: min(30vh, 420px);
+  overflow: auto;
+}
+
                 @keyframes spin {
                     to {
                         transform: rotate(360deg);
@@ -4674,6 +5715,22 @@ JS;
                         gap: 5px;
                     }
                 }
+                .mbp-inv-tab{
+  padding:8px 16px;
+  background: rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:8px;
+  color:#cbd5e1;
+  cursor:pointer;
+  font-weight:700;
+  text-decoration:none;
+}
+.mbp-inv-tab.active{
+  background: rgba(59,130,246,.25);
+  border-color: rgba(59,130,246,.45);
+  color:#93c5fd;
+}
+
             </style>
 
             <script>
@@ -4681,7 +5738,14 @@ JS;
                 window.MBP_ADMIN_NONCE = <?php echo wp_json_encode($nonce); ?>;
                 window.MBP_WEEK_START = <?php echo wp_json_encode($week_start_ymd); ?>;
             </script>
-            <script src="<?php echo plugin_dir_url(__FILE__) . 'invoices-functions.js'; ?>"></script>
+            <script
+                src="<?php echo esc_url(plugins_url('includes/invoices-functions.js', MBP_PLUGIN_FILE)); ?>?ver=<?php echo time(); ?>"></script>
+            <script>
+                console.log("AFTER INCLUDE =>", window.MBP_Invoices);
+            </script>
+
+
+
         </head>
 
         <body>
@@ -4824,78 +5888,249 @@ JS;
 
             <!-- Templates -->
             <div id="tpl-invoices" style="display:none">
-                <div style="max-width:1100px;">
-                    <h2 class="mbp-hl-title">🧾 ویژگی‌های کلیدی فاکتور</h2>
-                    <div class="mbp-hl-sub">
-                        این بخش فعلاً به صورت معرفی امکانات نمایش داده می‌شود (Highlights).<br>
+                <h2 style="margin-top:0;margin-bottom:14px;">🧾 فاکتورها</h2>
+
+             <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+  <a href="#" class="mbp-inv-tab active" data-tab="list">📋 لیست فاکتورها</a>
+  <a href="#" class="mbp-inv-tab" data-tab="create">➕ ساخت فاکتور</a>
+  <a href="#" class="mbp-inv-tab" data-tab="woo">🛒 فاکتورهای ووکامرس</a>
+  <a href="#" class="mbp-inv-tab" data-tab="settings">⚙️ تنظیمات</a>
+</div>
+
+
+                <div class="mbp-inv-pane" data-pane="list">
+                    <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                        <div style="font-weight:900;">آخرین فاکتورها</div>
+                        <button class="mbp-btn" id="mbp-inv-refresh">🔄 رفرش</button>
                     </div>
 
-                    <div class="mbp-highlights">
-
-                        <div class="mbp-highlight">
-                            <div class="mbp-highlight-top">
-                                <div class="mbp-highlight-icon">⚙️</div>
-                                <div class="mbp-highlight-badge">highlights</div>
-                            </div>
-                            <div class="mbp-highlight-text">امکان سفارشی‌سازی فاکتور</div>
-                            <div class="mbp-highlight-desc">قالب، رنگ، لوگو، متن‌ها و آیتم‌ها قابل شخصی‌سازی هستند.</div>
+                    <div id="mbp-invoices-list"
+                        style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;">
+                        <div style="text-align:center;color:#cbd5e1;padding:30px;">
+                            <div class="mbp-loading" style="width:40px;height:40px;margin:0 auto 15px;"></div>
+                            <div>در حال بارگذاری...</div>
                         </div>
-
-                        <div class="mbp-highlight">
-                            <div class="mbp-highlight-top">
-                                <div class="mbp-highlight-icon">📅</div>
-                                <div class="mbp-highlight-badge">highlights</div>
-                            </div>
-                            <div class="mbp-highlight-text">پشتیبانی از تاریخ شمسی و میلادی</div>
-                            <div class="mbp-highlight-desc">نمایش تاریخ فاکتور با هر دو فرمت برای راحتی مشتری و مدیر.</div>
-                        </div>
-
-                        <div class="mbp-highlight">
-                            <div class="mbp-highlight-top">
-                                <div class="mbp-highlight-icon">🖨️</div>
-                                <div class="mbp-highlight-badge">highlights</div>
-                            </div>
-                            <div class="mbp-highlight-text">امکان چاپ و ذخیره به PDF</div>
-                            <div class="mbp-highlight-desc">چاپ مستقیم از پنل و خروجی PDF برای ارسال یا آرشیو.</div>
-                        </div>
-
-                        <div class="mbp-highlight">
-                            <div class="mbp-highlight-top">
-                                <div class="mbp-highlight-icon">📩</div>
-                                <div class="mbp-highlight-badge">highlights</div>
-                            </div>
-                            <div class="mbp-highlight-text">ارسال پیامک وضعیت سفارش</div>
-                            <div class="mbp-highlight-desc">ارسال خودکار یا دستی پیامک وضعیت و لینک فاکتور به مشتری.</div>
-                        </div>
-
-                        <div class="mbp-highlight">
-                            <div class="mbp-highlight-top">
-                                <div class="mbp-highlight-icon">🔳</div>
-                                <div class="mbp-highlight-badge">highlights</div>
-                            </div>
-                            <div class="mbp-highlight-text">پشتیبانی از بارکد و QR Code</div>
-                            <div class="mbp-highlight-desc">برای اعتبارسنجی سریع فاکتور یا هدایت به صفحه پرداخت/جزئیات.</div>
-                        </div>
-
                     </div>
                 </div>
+               <div class="mbp-inv-pane" data-pane="create" style="display:none">
+  <div style="max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:14px;">
+
+    <!-- کارت اطلاعات مشتری -->
+    <div style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="font-weight:900;font-size:15px;">👤 اطلاعات مشتری</div>
+        <div style="opacity:.75;font-size:12px;">فیلدهای * ضروری هستند</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:10px;margin-top:12px;">
+        <div>
+          <label class="mbp-form-label">نام مشتری *</label>
+          <input id="inv_customer_name" class="mbp-form-input" placeholder="مثلاً علی رضایی">
+        </div>
+        <div>
+          <label class="mbp-form-label">موبایل</label>
+          <input id="inv_mobile" class="mbp-form-input" placeholder="09xxxxxxxxx">
+        </div>
+        <div>
+          <label class="mbp-form-label">ایمیل</label>
+          <input id="inv_email" class="mbp-form-input" placeholder="name@example.com">
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <label class="mbp-form-label">یادداشت (اختیاری)</label>
+        <textarea id="inv_notes" class="mbp-form-input" rows="2" placeholder="توضیحات اضافی..."></textarea>
+      </div>
+    </div>
+
+    <!-- کارت آیتم‌ها -->
+    <div style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="font-weight:900;font-size:15px;">🧾 آیتم‌های فاکتور</div>
+        <button type="button" class="mbp-btn" id="mbp-inv-add-item">➕ افزودن آیتم</button>
+      </div>
+
+      <!-- هدر جدول -->
+      <div style="margin-top:12px;display:grid;grid-template-columns:1.3fr .45fr .6fr .7fr .25fr;gap:8px;
+                  font-size:12px;opacity:.75;padding:0 2px;">
+        <div>اسم آیتم</div>
+        <div>تعداد</div>
+        <div>قیمت واحد</div>
+        <div>جمع</div>
+        <div></div>
+      </div>
+
+      <!-- ردیف‌ها اینجا توسط JS اضافه میشه -->
+      <div class="mbp-inv-items-scroll">
+        <div id="mbp-inv-items" style="margin-top:8px;display:flex;flex-direction:column;gap:8px;" class="mbp-inv-items"></div>
+      </div>
+
+      <div style="margin-top:12px;opacity:.7;font-size:12px;line-height:1.8;">
+        نکته: فقط ردیف‌هایی که “اسم آیتم” داشته باشند ذخیره می‌شوند.
+      </div>
+    </div>
+
+    <!-- کارت جمع‌بندی -->
+    <div style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:16px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end;">
+        <div>
+          <label class="mbp-form-label">تخفیف</label>
+          <input id="inv_discount" class="mbp-form-input" type="number" min="0" value="0">
+        </div>
+        <div>
+          <label class="mbp-form-label">هزینه (حمل/سرویس/…)</label>
+          <input id="inv_tax" class="mbp-form-input" type="number" min="0" value="0">
+        </div>
+        <div style="text-align:left;">
+          <div style="opacity:.7;font-size:12px;margin-bottom:6px;">مبلغ نهایی</div>
+          <div id="inv_total_box"
+               style="font-weight:900;font-size:18px;padding:10px 12px;border-radius:14px;
+                      background:rgba(16,185,129,.14);border:1px solid rgba(16,185,129,.25);
+                      display:inline-block;min-width:200px;text-align:center;">
+            0 تومان
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:14px;display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap;">
+        <button class="cf-btn primary" id="mbp-create-invoice-btn">💾 ذخیره فاکتور</button>
+        <button class="cf-btn ghost" type="button" onclick="document.querySelector('#mbp-view .mbp-inv-tab[data-tab=&quot;list&quot;]')?.click()">↩️ بازگشت به لیست</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="mbp-inv-pane" data-pane="woo" style="display:none">
+  <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:10px;">
+    <div style="font-weight:900;">آخرین سفارش‌های ووکامرس</div>
+    <button class="mbp-btn" id="mbp-wc-refresh">🔄 رفرش</button>
+  </div>
+
+  <div id="mbp-wc-orders"
+       style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;">
+    <div style="text-align:center;color:#cbd5e1;padding:30px;">
+      <div class="mbp-loading" style="width:40px;height:40px;margin:0 auto 15px;"></div>
+      <div>در حال بارگذاری سفارش‌ها...</div>
+    </div>
+  </div>
+</div>
+
+
+                <div class="mbp-inv-pane" data-pane="settings" style="display:none">
+                    <div class="mbp-inv-pane" data-pane="settings" style="display:none">
+  <div class="panel" style="max-width:980px;">
+    <h3 style="margin-top:0">⚙️ تنظیمات فاکتور / اطلاعات فروشنده</h3>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">لوگو (URL)</label>
+        <input id="inv_set_seller_logo_url" class="mbp-form-input" placeholder="https://..." />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">نام فروشنده / فروشگاه</label>
+        <input id="inv_set_seller_name" class="mbp-form-input" />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">تلفن</label>
+        <input id="inv_set_seller_phone" class="mbp-form-input" />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">ایمیل</label>
+        <input id="inv_set_seller_email" class="mbp-form-input" />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">وب‌سایت</label>
+        <input id="inv_set_seller_website" class="mbp-form-input" />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">کد پستی</label>
+        <input id="inv_set_seller_postcode" class="mbp-form-input" />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">شماره ثبت/ملی</label>
+        <input id="inv_set_seller_reg_number" class="mbp-form-input" />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">شماره اقتصادی</label>
+        <input id="inv_set_seller_economic_code" class="mbp-form-input" />
+      </div>
+
+      <div class="mbp-form-group" style="grid-column:1/-1">
+        <label class="mbp-form-label">آدرس</label>
+        <input id="inv_set_seller_address1" class="mbp-form-input" placeholder="آدرس خیابان..." />
+      </div>
+
+      <div class="mbp-form-group" style="grid-column:1/-1">
+        <label class="mbp-form-label">ادامه آدرس</label>
+        <input id="inv_set_seller_address2" class="mbp-form-input" placeholder="ادامه آدرس..." />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">شهر</label>
+        <input id="inv_set_seller_city" class="mbp-form-input" />
+      </div>
+
+      <div class="mbp-form-group">
+        <label class="mbp-form-label">کشور/استان (پیش‌فرض ووکامرس)</label>
+        <input id="inv_set_seller_country" class="mbp-form-input" placeholder="مثلاً IR:Tehran" />
+      </div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.12)">
+      <div style="font-weight:900;margin-bottom:10px">🧩 فیلدهای سفارشی مثل عکس‌ها</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div class="mbp-form-group">
+          <label class="mbp-form-label">لیبل سفارشی فروشنده</label>
+          <input id="inv_set_seller_custom_label" class="mbp-form-input" placeholder="مقدار سفارشی فروشگاه" />
+        </div>
+        <div class="mbp-form-group">
+          <label class="mbp-form-label">مقدار سفارشی فروشنده (ثابت)</label>
+          <input id="inv_set_seller_custom_value" class="mbp-form-input" placeholder="مثلاً مقدار سفارشی" />
+        </div>
+
+        <div class="mbp-form-group">
+          <label class="mbp-form-label">لیبل متای سفارش</label>
+          <input id="inv_set_order_meta_label" class="mbp-form-input" placeholder="مقدار سفارشی" />
+        </div>
+        <div class="mbp-form-group">
+          <label class="mbp-form-label">کلید متای سفارش (Order Meta Key)</label>
+          <input id="inv_set_order_meta_key" class="mbp-form-input" placeholder="مثلاً custom_amount" />
+        </div>
+
+        <div class="mbp-form-group">
+          <label class="mbp-form-label">لیبل متای مشتری</label>
+          <input id="inv_set_customer_meta_label" class="mbp-form-input" placeholder="سن" />
+        </div>
+        <div class="mbp-form-group">
+          <label class="mbp-form-label">کلید متای مشتری (از سفارش)</label>
+          <input id="inv_set_customer_meta_key" class="mbp-form-input" placeholder="مثلاً age" />
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;">
+      <button class="cf-btn primary" id="mbp-save-invoice-settings">💾 ذخیره تنظیمات</button>
+      <span id="inv-settings-hint" style="margin-right:10px;opacity:.75;font-size:12px"></span>
+    </div>
+  </div>
+</div>
+
             </div>
+
+
 
 
             <!-- Invoice List -->
-            <div
-                style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:14px;">
-                <div style="font-weight:900;margin-bottom:10px;">لیست فاکتورها</div>
-                <div id="mbp-invoices-list">
-                    <div style="text-align:center;color:#cbd5e1;padding:30px;">
-                        <div class="mbp-loading" style="width:40px;height:40px;margin:0 auto 15px;"></div>
-                        <div>در حال بارگذاری...</div>
-                    </div>
-                </div>
-            </div>
-
-            </div>
-            </div>
+         
 
 
             <script>
@@ -4959,29 +6194,42 @@ JS;
                                 t.classList.add('show');
                                 setTimeout(() => t.classList.remove('show'), 3000);
                             }
-
                             function render(name) {
                                 console.log('🔄 Rendering view:', name);
 
                                 if (name === 'dashboard') {
                                     mount('tpl-dashboard');
+
                                 } else if (name === 'schedule') {
                                     mount('tpl-schedule');
+
                                 } else if (name === 'services') {
                                     mount('tpl-services');
                                     setTimeout(loadServices, 100);
+
                                 } else if (name === 'custom_fields') {
                                     mount('tpl-custom_fields');
                                     setTimeout(initSlots, 100);
+
                                 } else if (name === 'invoices') {
                                     mount('tpl-invoices');
+
+                                    setTimeout(function () {
+                                        if (window.MBP_Invoices && typeof window.MBP_Invoices.init === 'function') {
+                                            window.MBP_Invoices.init();
+                                        } else {
+                                            console.error("❌ invoices-functions.js لود نشده (MBP_Invoices وجود ندارد)");
+                                        }
+                                    }, 0);
+
                                 } else {
                                     view.innerHTML = `
-            <h2 style="margin-top:0">${name}</h2>
-            <div style="opacity:.85;padding:20px;text-align:center;">بزودی...</div>
-        `;
+      <h2 style="margin-top:0">${name}</h2>
+      <div style="opacity:.85;padding:20px;text-align:center;">بزودی...</div>
+    `;
                                 }
                             }
+                            console.log("✅ invoices-functions.js LOADED");
 
 
                             // مدیریت کلیک روی تب‌ها
@@ -5463,12 +6711,15 @@ JS;
                             }
 
                             function closeServiceModal() {
-                                const modal = document.getElementById('mbp-service-modal');
-                                if (modal) {
-                                    modal.style.animation = 'fadeOut 0.2s ease';
-                                    setTimeout(() => modal.remove(), 200);
-                                }
-                            }
+  const modal = document.getElementById('mbp-service-modal');
+  if (modal) {
+    modal.style.animation = 'fadeOut 0.2s ease';
+    setTimeout(() => modal.remove(), 200);
+  }
+}
+
+window.closeServiceModal = closeServiceModal;
+
 
                             async function saveServiceFromModal(form) {
                                 const submitBtn = form.querySelector('button[type="submit"]');
@@ -5842,6 +7093,10 @@ JS;
         <?php
         exit;
     }
+
+
+
+
 
     public function ajax_get_time_slots()
     {

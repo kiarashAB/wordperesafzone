@@ -3,7 +3,7 @@
  * Plugin Name: blugin-rezerf
  * Plugin URI: #
  * Description: ورژن بتا رزو نوبت دهی
- * Version: 0.8.7
+ * Version: 0.9.0
  * Author: kiarash abdollahi
  * Author URI: #
  * License: GPL2
@@ -24,6 +24,7 @@ if ( ! function_exists('mbp_get_plugin_version') ) {
   }
 }
 define('MBP_VERSION', mbp_get_plugin_version());
+define('MBP_PLUGIN_FILE', __FILE__);
 
 
 // لود کلاس‌ها
@@ -35,6 +36,7 @@ require_once MBP_PLUGIN_DIR . 'includes/class-mbp-payment-gateway.php';
 require_once MBP_PLUGIN_DIR . 'elementor/elementor-init.php';
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-invoice.php';
 require_once MBP_PLUGIN_DIR . 'includes/class-mbp-invoice-license.php';
+
 
 
 
